@@ -7,6 +7,6 @@ echo   請勿關閉此視窗，系統將自動開啟瀏覽器。
 echo ===================================================
 echo.
 
-streamlit run 0🏠儀表板.py
+streamlit run 0儀表板.py
 echo.
 pause
