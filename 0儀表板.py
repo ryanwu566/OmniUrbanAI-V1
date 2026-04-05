@@ -143,7 +143,7 @@ with st.container():
     st.markdown('<div class="lbl" style="font-size:1rem;">Target Location (目標基地設定)</div>', unsafe_allow_html=True)
     c1, c2 = st.columns([3, 1])
     with c1:
-        manual_addr = st.text_input("直接輸入完整地址", placeholder="例如：高雄市左營區博愛三路123號", label_visibility="collapsed")
+        manual_addr = st.text_input("直接輸入完整地址", placeholder="例如：臺北市文山區指南路二段64號", label_visibility="collapsed")
     with c2:
         sel_floor = st.selectbox("評估類型", ["全棟評估", "1樓店面", "4~5樓公寓", "電梯大樓"], label_visibility="collapsed")
     st.markdown('<div style="color:#64748b; font-size:0.85rem; margin:8px 0;">或使用下方選單快速定位：</div>', unsafe_allow_html=True)
