@@ -1,182 +1,271 @@
+# -*- coding: utf-8 -*-
+"""
+OmniUrban Decision Dashboard v10.1 (The Ultimate B2B Edition)
+=============================================================
+1. 滿版橫式街景 (高度 500px)。
+2. 三圖連動：點擊地圖 -> 反查地址 -> 街景轉向 -> 估價與機能全部同步重算。
+3. 完美復刻「AI 特徵估價 & 風險合併卡片」(修復長地址破版)。
+4. 橫向 3x2 Grid 數據瀑布流。
+5. 開放完整地址手動輸入。
+"""
+
 import streamlit as st
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
 import folium
 from streamlit_folium import st_folium
-import time
+import plotly.graph_objects as go
+import re
+from utils.engines import OmniEngine
+
+engine = OmniEngine()
+st.set_page_config(layout="wide", page_title="OmniUrban Intelligence", initial_sidebar_state="expanded")
 
 # ==========================================
-# 1. 頁面與全域設定 (解決：空白調整與排版)
+# 📐 B2B 專業級樣式系統 (深色 SaaS 質感)
 # ==========================================
-st.set_page_config(page_title="Omni-Urban AI 儀表板", page_icon="🏠", layout="wide", initial_sidebar_state="expanded")
-
-# 隱藏預設的 Streamlit 樣式，讓畫面更專業
-hide_style = """
+st.markdown("""
     <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    .block-container {padding-top: 2rem; padding-bottom: 2rem;}
-    </style>
-"""
-st.markdown(hide_style, unsafe_allow_html=True)
-
-# ==========================================
-# 2. 核心邏輯引擎與資料庫 (解決：AI 幻想與評分標準)
-# ==========================================
-def get_lat_lon(address):
-    """將地址轉換為精確經緯度 (這裡暫時模擬，實戰請接 Geocoding API)"""
-    # 預設給一個信義區的座標
-    return 25.033964, 121.564468
-
-def fetch_urban_data(lat, lon):
-    """模擬複雜的 6 大機能 API 爬蟲與資料庫檢索"""
-    time.sleep(1) # 模擬運算時間
-    return {
-        "交通連結": {
-            "score": 92, "weight": "25%", 
-            "std": "500m內捷運站、公車站點密度。附加：步行3分鐘內 YouBike 站點。",
-            # 解決：YouBike 數據顯示
-            "details": "📍 捷運台北101站 (300m)\n🚲 **YouBike 2.0 站點 (150m，目前可借: 8台)**"
-        },
-        "醫療網絡": {
-            "score": 85, "weight": "15%", 
-            "std": "1km內大型醫院(醫學中心/區域醫院)與社區藥局分布。",
-            "details": "📍 臺北醫學大學附設醫院 (800m)\n💊 周邊健保特約藥局 4 家"
-        },
-        "學區教育": {
-            "score": 88, "weight": "15%", 
-            "std": "周邊國中小學區重疊率、步行距離與文教設施密度。",
-            "details": "📍 信義國小 (400m)\n🏫 連鎖文理補習班 3 家"
-        },
-        "商業聚落": {
-            "score": 95, "weight": "20%", 
-            "std": "步行10分鐘內連鎖超市(全聯/家樂福)、便利商店與商場數量。",
-            "details": "📍 全聯福利中心 (200m)\n🏪 24H 便利商店 5 家"
-        },
-        "休閒綠地": {
-            "score": 78, "weight": "15%", 
-            "std": "800m內都市計畫公園綠地面積總和與國民運動中心。",
-            "details": "📍 信義廣場公園 (150m)\n🏃‍♂️ 信義運動中心"
-        },
-        "消防治安": {
-            "score": 90, "weight": "10%", 
-            "std": "派出所、消防隊服務半徑及歷年犯罪熱區比對。",
-            "details": "📍 信義分局三張犁派出所 (600m)\n🚒 信義消防分隊"
-        }
-    }
-
-def draw_radar_chart(data_dict):
-    """繪製專業雷達圖"""
-    categories = list(data_dict.keys())
-    scores = [v["score"] for v in data_dict.values()]
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
     
-    fig = go.Figure(data=go.Scatterpolar(
-        r=scores + [scores[0]],
-        theta=categories + [categories[0]],
-        fill='toself',
-        line_color='#00d4ff',
-        fillcolor='rgba(0, 212, 255, 0.3)',
-        hoverinfo='text',
-        text=[f"{c}: {s}分" for c, s in zip(categories, scores)] + [f"{categories[0]}: {scores[0]}分"]
+    .stApp { background-color: #0B1220; color: #E5E7EB; font-family: 'Inter', sans-serif; }
+    #MainMenu, footer, header { visibility: hidden; }
+    
+    .metric-card { 
+        background: #111827; border: 1px solid #334155; border-radius: 12px; 
+        padding: 24px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2); 
+        height: 100%; position: relative; overflow: hidden; 
+    }
+    
+    .hero-title { 
+        background: linear-gradient(135deg, #ffffff, #94a3b8); 
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent; 
+        font-weight: 800; font-size: 2.8rem; letter-spacing: -0.03em; margin-bottom: 5px; 
+    }
+    
+    .lbl { font-size: 0.85rem; font-weight: 600; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; display: block; }
+    .val { font-size: 3.5rem; font-weight: 700; line-height: 1.1; margin-bottom: 4px; color: #38BDF8; } 
+    .val-risk { font-size: 2.5rem; font-weight: 700; line-height: 1.1; margin-bottom: 4px; } 
+    .val-text { font-size: 1.8rem; font-weight: 700; line-height: 1.2; margin-bottom: 4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .unit { font-size: 1.2rem; color: #94A3B8; font-weight: 400; }
+    .sub { font-size: 0.95rem; color: #64748b; margin-top: 8px; }
+
+    .color-primary { color: #38BDF8; }
+    .color-success { color: #14B8A6; } 
+    .color-danger { color: #EF4444; }
+    .color-warning { color: #F59E0B; }
+
+    .status-capsule { 
+        background: #111827; border: 1px solid #334155; border-radius: 99px; 
+        padding: 8px 16px; display: inline-flex; gap: 16px; align-items: center; 
+        margin-bottom: 24px; font-size: 0.8rem; color: #94A3B8; 
+    }
+    
+    .stTextInput>div>div>input, .stSelectbox>div>div>div { background-color: #111827 !important; border: 1px solid #334155 !important; color: #E5E7EB !important; border-radius: 6px !important; }
+    .stButton>button { background: #38BDF8 !important; color: #0B1220 !important; border-radius: 6px !important; font-weight: 600 !important; border: none !important; width: 100%; padding: 0.6rem !important; }
+    .stButton>button:hover { background: #7DD3FC !important; }
+    
+    .bar-bg { background: #334155; height: 6px; border-radius: 3px; margin: 12px 0; overflow: hidden; }
+    .bar-fg { height: 100%; background: #38BDF8; border-radius: 3px; }
+    .divider { border-top: 1px solid #334155; margin: 24px 0; }
+    </style>
+""", unsafe_allow_html=True)
+
+# ==========================================
+# 🚀 處理地圖點擊的「三圖連動」邏輯
+# ==========================================
+if st.session_state.get("pending_map_update"):
+    with st.spinner("📍 偵測到地圖點擊，正在反查地址並同步街景與估價模型..."):
+        new_addr = st.session_state.pending_map_update["addr"]
+        floor = st.session_state.pending_map_update["floor"]
+        res = engine.get_dynamic_data(new_addr, floor)
+        if res: 
+            st.session_state.report_data = res
+            engine.save_to_history()
+    st.session_state.pending_map_update = None
+    st.rerun()
+
+data = st.session_state.report_data
+m = data.get("moltke_data", {})
+w = data.get("weather_data", {})
+env = data.get("env_data", {})
+yb = data.get("yb_data", {})
+bus = data.get("bus_data", {})
+api_health = m.get("api_health", {})
+
+# ==========================================
+# 📍 Header & 萬能搜尋列
+# ==========================================
+st.markdown('<div class="hero-title">OmniUrban Spatial Engine</div>', unsafe_allow_html=True)
+
+status_html = f"""
+<div class="status-capsule">
+    <div style="color:#14B8A6; font-weight:700;">● SYSTEM ONLINE</div>
+    <div>|</div>
+    <div>API: {api_health.get('Google','--')}</div>
+    <div>Weather: {w.get('temp','--')}</div>
+    <div>AQI: {env.get('aqi','--')} ({env.get('api_status','--')})</div>
+</div>
+"""
+st.markdown(status_html, unsafe_allow_html=True)
+
+with st.container():
+    st.markdown('<div class="lbl" style="font-size:1rem;">Target Location (目標基地設定)</div>', unsafe_allow_html=True)
+    c1, c2 = st.columns([3, 1])
+    
+    with c1:
+        manual_addr = st.text_input("直接輸入完整地址 (若填寫此欄，將優先解析)", placeholder="例如：新北市永和區中正路95號", label_visibility="collapsed")
+    with c2:
+        sel_floor = st.selectbox("評估類型", ["全棟評估", "1樓店面", "4~5樓公寓", "電梯大樓"], label_visibility="collapsed")
+        
+    st.markdown('<div style="color:#64748b; font-size:0.85rem; margin:10px 0;">或使用下方選單快速定位：</div>', unsafe_allow_html=True)
+    
+    c3, c4, c5, c6 = st.columns([1, 1, 1.5, 1])
+    with c3: sel_city = st.selectbox("縣市", ["--"] + list(engine.taiwan_data.keys()), label_visibility="collapsed")
+    with c4: sel_dist = st.selectbox("行政區", engine.taiwan_data.get(sel_city, ["--"]) if sel_city != "--" else ["--"], disabled=(sel_city == "--"), label_visibility="collapsed")
+    with c5:
+        roads = engine.get_roads_list(sel_city, sel_dist)
+        sel_road = st.selectbox("路段", roads if roads else ["--"], disabled=(sel_dist == "--" or not roads), label_visibility="collapsed")
+    with c6: sel_num = st.text_input("門牌", placeholder="門牌號碼 (選填)", label_visibility="collapsed")
+    
+    st.write("")
+    if st.button("啟動特徵空間分析 (RUN ANALYSIS)"):
+        final_target = manual_addr if manual_addr else f"{sel_city}{sel_dist}{sel_road if not sel_road.startswith('--') else ''}{sel_num}"
+        if final_target.strip() and final_target != "--":
+            with st.spinner("Synchronizing Government Open Data & Geospatial APIs..."):
+                res = engine.get_dynamic_data(final_target, sel_floor)
+                if res: st.session_state.report_data = res; engine.save_to_history(); st.rerun()
+
+if not data.get("city"): st.stop()
+st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
+
+# ==========================================
+# 📍 第一層：合併專家估價卡 + 歷史實價趨勢
+# ==========================================
+cs_data = m.get("core_summary", {})
+c1, c2 = st.columns([1, 1])
+
+with c1:
+    r_status = m.get('risks',{}).get('高風險','--')
+    r_color = "color-success" if r_status == "無顯著異常" else "color-danger"
+    st.markdown(f"""
+    <div class="metric-card">
+        <span class="lbl">AI MODEL VALUATION (特徵估價)</span>
+        <div style="font-size:0.95rem; color:#94A3B8; margin-bottom:8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="{data['city']} ({sel_floor})">
+            {data['city']} ({sel_floor})
+        </div>
+        <div class="val">{cs_data.get('valuation', '--')} <span class="unit">萬/坪</span></div>
+        <div class="sub">模型：{cs_data.get('valuation_source', '--')}</div>
+        <div class="divider"></div>
+        <span class="lbl">RISK STATUS (風險判定)</span>
+        <div class="val-risk {r_color}">{r_status}</div>
+        <div class="sub">產權：{m.get('risks',{}).get('低風險','--')}</div>
+    </div>""", unsafe_allow_html=True)
+
+with c2:
+    st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+    st.markdown('<span class="lbl">Historical Trend (區域實價歷史軌跡)</span>', unsafe_allow_html=True)
+    hist = m.get("historical_prices", [50, 55, 60, 65, 70, 75])
+    fig = go.Figure(data=go.Scatter(
+        x=['2021','2022','2023','2024','2025','2026'], y=hist, mode='lines+markers', 
+        line=dict(color='#38BDF8', width=3), marker=dict(color='#0B1220', size=8, line=dict(color='#38BDF8', width=2))
     ))
     fig.update_layout(
-        polar=dict(
-            radialaxis=dict(visible=True, range=[0, 100], gridcolor='rgba(255, 255, 255, 0.2)'),
-            bgcolor='rgba(0,0,0,0)'
-        ),
-        showlegend=False,
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=40, r=40, t=20, b=20),
-        height=380
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', margin=dict(l=0,r=0,t=10,b=0), height=380, 
+        xaxis=dict(showgrid=False, tickfont=dict(color='#94A3B8')), yaxis=dict(showgrid=True, gridcolor='#1e293b', tickfont=dict(color='#94A3B8'))
     )
-    return fig
+    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+    st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
 
 # ==========================================
-# 3. 側邊欄 UI
+# 📍 第二層：滿版巨型 360 街景
 # ==========================================
-with st.sidebar:
-    st.image("https://img.icons8.com/fluency/96/city-buildings.png", width=60)
-    st.title("📍 位置快篩")
-    st.markdown("<div style='padding: 5px;'></div>", unsafe_allow_html=True)
+g_key = data.get("google_key", "")
+sv_html = f"""<iframe width="100%" height="500" style="border:0; border-radius:12px;" loading="lazy" allowfullscreen src="https://www.google.com/maps/embed/v1/streetview?key={g_key}&location={data['lat']},{data['lon']}&heading=0&pitch=0&fov=90"></iframe>""" if g_key else "<div style='color:#64748b; height:500px; display:flex; align-items:center; justify-content:center; border:1px solid #334155; border-radius:12px;'>Street View Loading...</div>"
+st.markdown(f"""<div class="metric-card" style="padding:16px;"><span class="lbl" style="margin-left:8px;">Street View 360° (基地實境)</span>{sv_html}</div>""", unsafe_allow_html=True)
+
+st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
+
+# ==========================================
+# 🗺️ 第三層：巨型雙重圖資雷達 (攔截點擊事件)
+# ==========================================
+st.markdown('<div class="lbl" style="font-size: 1.1rem; margin-bottom:12px;">Dual-Map Spatial Radar (點擊地圖任意處可同步解析新位置)</div>', unsafe_allow_html=True)
+st.markdown('<div class="metric-card" style="padding: 0; overflow:hidden;">', unsafe_allow_html=True)
+
+d_map = engine.create_dual_map(data["lat"], data["lon"], data.get("raw_pois", []))
+map_out = st_folium(d_map, width="100%", height=750, returned_objects=["last_clicked"], key=f"dmap_{data['lat']}_{data['lon']}")
+
+if map_out and map_out.get("last_clicked"):
+    click_lat = map_out["last_clicked"]["lat"]
+    click_lon = map_out["last_clicked"]["lng"]
+    if engine.calc_real_dist(data['lat'], data['lon'], click_lat, click_lon) > 30:
+        new_addr = engine.reverse_geocode(click_lat, click_lon)
+        if new_addr:
+            st.session_state.pending_map_update = {"addr": new_addr, "floor": sel_floor}
+            st.rerun()
+
+st.markdown('</div>', unsafe_allow_html=True)
+st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
+
+# ==========================================
+# 📊 第四層：外部機能與環境指標
+# ==========================================
+c_left, c_mid, c_right = st.columns(3)
+
+with c_left:
+    yb_val = yb.get('bikes','0')
+    yb_color = "color-danger" if yb_val == "0" or yb_val == "--" else "color-primary"
+    st.markdown(f"""
+    <div class="metric-card" style="padding:24px;">
+        <span class="lbl">Transit: YouBike 2.0</span>
+        <div class="val-text {yb_color}" style="margin-bottom:12px;">{yb.get('station', '--')}</div>
+        <div class="sub">可用車輛：<span style="color:#fff; font-weight:bold;">{yb_val}</span> 台</div>
+        <div class="sub">直線距離：{yb.get('dist', '--')}m</div>
+    </div>""", unsafe_allow_html=True)
+
+with c_mid:
+    bus_dist = bus.get('dist', '--')
+    bus_color = "color-danger" if bus_dist == "--" else "color-primary"
+    st.markdown(f"""
+    <div class="metric-card" style="padding:24px;">
+        <span class="lbl">Transit: Bus Station (全台公車)</span>
+        <div class="val-text {bus_color}" style="margin-bottom:12px;">{bus.get('station', '--')}</div>
+        <div class="sub">覆蓋範圍：全台資料庫連線</div>
+        <div class="sub">直線距離：{bus_dist}{"m" if bus_dist != "--" else ""}</div>
+    </div>""", unsafe_allow_html=True)
     
-    address_input = st.text_input("請輸入評估地址", "台北市信義區信義路五段7號")
-    analyze_btn = st.button("啟動 AI 深度評估", type="primary", use_container_width=True)
-    
-    st.divider()
-    st.caption("系統版本: OmniUrban V2.0")
-    st.caption("資料來源: 內政部實價登錄、Google Places API")
+with c_right:
+    aqi_val = env.get('aqi','--')
+    aqi_color = "color-success" if aqi_val != "--" and int(aqi_val) <= 50 else "color-warning"
+    st.markdown(f"""
+    <div class="metric-card" style="padding:24px;">
+        <span class="lbl">Environment: US AQI</span>
+        <div class="val-risk {aqi_color}" style="margin-bottom:12px;">{aqi_val}</div>
+        <div class="sub">空氣狀態：{env.get('status', '--')}</div>
+        <div class="sub">觀測站：衛星精確定位</div>
+    </div>""", unsafe_allow_html=True)
+
+st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
 
 # ==========================================
-# 4. 主畫面 UI
+# 📊 第五層：機能瀑布流
 # ==========================================
-st.title("🏠 Omni-Urban Intelligence 核心儀表板")
-st.markdown("<div style='padding: 10px;'></div>", unsafe_allow_html=True) # 解決：空白調整
+st.markdown('<div class="lbl" style="font-size: 1.1rem; margin-bottom:12px;">Area Capabilities (生活圈 6 大機能解析)</div>', unsafe_allow_html=True)
 
-if analyze_btn:
-    with st.spinner("AI 正在解析區域機能與法規資料..."):
-        # 取得精確座標
-        lat, lon = get_lat_lon(address_input)
-        urban_data = fetch_urban_data(lat, lon)
-        
-        # --- 上半部：雷達圖與機能解析 ---
-        # 使用 0.1 隱藏欄位製造完美的呼吸留白空間
-        col_radar, col_space, col_details = st.columns([1.2, 0.1, 1])
-        
-        with col_radar:
-            st.subheader("🎯 區域潛力雷達圖")
-            st.caption("多維度評估當地生活圈價值")
-            st.plotly_chart(draw_radar_chart(urban_data), use_container_width=True)
+s = data.get("poi_scores", [0]*6); n = data.get("poi_names", [[]]*6)
+lbls = ["交通樞紐", "醫療網絡", "學區教育", "商業聚落", "休閒綠地", "消防治安"]
 
-        with col_details:
-            st.subheader("📊 六大機能生活圈解析")
-            st.caption("點擊下方指標，查看 AI 評估依據與實測數據")
-            
-            # 解決：展開六大機能、加入評分標準
-            for key, data in urban_data.items():
-                with st.expander(f"🔹 {key}：{data['score']} 分 (權重 {data['weight']})"):
-                    st.write(f"**📜 評分標準：** {data['std']}")
-                    st.write(f"{data['details']}")
-                    # 顏色根據分數改變
-                    color = "green" if data['score'] >= 80 else "orange" if data['score'] >= 60 else "red"
-                    st.markdown(f"""
-                        <div style="width: 100%; background-color: #333; border-radius: 5px;">
-                            <div style="width: {data['score']}%; height: 8px; background-color: {color}; border-radius: 5px;"></div>
-                        </div>
-                    """, unsafe_allow_html=True)
-                    st.markdown("<br>", unsafe_allow_html=True)
-
-        # 解決：區塊之間的空白呼吸感
-        st.divider()
-        st.markdown("<div style='padding: 10px;'></div>", unsafe_allow_html=True)
-
-        # --- 下半部：地圖與街景對位 ---
-        st.subheader("📍 AI 空間實境與精準校準")
-        st.caption("系統已強制使用經緯度絕對座標定位，確保地圖與實景 100% 吻合。")
-        
-        col_map, col_space2, col_sv = st.columns([1, 0.05, 1])
-        
-        with col_map:
-            st.write("**周邊環境地圖**")
-            m = folium.Map(location=[lat, lon], zoom_start=16, tiles="CartoDB dark_matter")
-            folium.Marker([lat, lon], tooltip="目標位置", icon=folium.Icon(color='red', icon='info-sign')).add_to(m)
-            # 在地圖上加上一個 500m 輻射圈
-            folium.Circle([lat, lon], radius=500, color='#00d4ff', fill=True, fill_opacity=0.2).add_to(m)
-            st_folium(m, width="100%", height=350)
-            
-        with col_sv:
-            st.write("**實境存證 (Google Street View)**")
-            # 解決：街景對不上。URL 強制綁定 location={lat},{lon}
-            try:
-                map_key = st.secrets["GOOGLE_MAPS_API_KEY"]
-                # 這裡的 location={lat},{lon} 是鎖定街景不跑偏的絕對關鍵
-                sv_url = f"https://maps.googleapis.com/maps/api/streetview?size=600x350&location={lat},{lon}&fov=90&heading=0&pitch=10&key={map_key}"
-                st.image(sv_url, caption=f"精準座標對位：({lat}, {lon})", use_container_width=True)
-            except KeyError:
-                st.error("⚠️ 讀取不到 Google Maps API 金鑰！請至 Streamlit Cloud 的 Advanced Settings > Secrets 中設定 `Maps_API_KEY`。")
-
-else:
-    # 首頁歡迎畫面留白
-    st.markdown("<br><br><br>", unsafe_allow_html=True)
-    st.info("👈 請於左側邊欄輸入地址，並點擊「啟動 AI 深度評估」開始分析。")
+html_skills = '<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;">'
+for i in range(6):
+    items_str = " · ".join([re.sub(r'\(.*?\)', '', x).strip() for x in n[i][:3]]) if n[i] else "無偵測數據"
+    html_skills += f"""
+    <div class="metric-card" style="padding: 20px; height:auto;">
+        <div style="display: flex; justify-content: space-between; align-items: baseline;">
+            <span class="lbl" style="margin:0; color:#E5E7EB; font-size:1rem;">{lbls[i]}</span>
+            <span style="font-size: 1.6rem; font-weight: 700; color: #38BDF8;">{s[i]}<span style="font-size:0.8rem; color:#94A3B8; font-weight:400;"> 分</span></span>
+        </div>
+        <div class="bar-bg"><div class="bar-fg" style="width:{s[i]}%;"></div></div>
+        <div class="sub" style="font-size:0.85rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">點位：{items_str}</div>
+    </div>"""
+html_skills += '</div>'
+st.markdown(html_skills, unsafe_allow_html=True)
