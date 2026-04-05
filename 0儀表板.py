@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-OmniUrban Decision Dashboard v10.1 (The Ultimate B2B Edition)
-=============================================================
-1. 滿版橫式街景 (高度 500px)。
-2. 三圖連動：點擊地圖 -> 反查地址 -> 街景轉向 -> 估價與機能全部同步重算。
-3. 完美復刻「AI 特徵估價 & 風險合併卡片」(修復長地址破版)。
-4. 橫向 3x2 Grid 數據瀑布流。
-5. 開放完整地址手動輸入。
+OmniUrban Decision Dashboard v10.2
+====================================
+修復項目：
+1. 六大機能生活圈 → 可展開/收合 (st.expander)
+2. 新增「評分標準說明」浮動圖例
+3. 街景 heading 改用 engines 回傳的 sv_heading，正確面對建物
+4. 空白間距統一精簡 (margin 從 24px 縮為 16px)
+5. YouBike 顯示 bikes 欄位修正（已在 engines 正規化）
 """
 
 import streamlit as st
@@ -56,7 +57,7 @@ st.markdown("""
     .status-capsule { 
         background: #111827; border: 1px solid #334155; border-radius: 99px; 
         padding: 8px 16px; display: inline-flex; gap: 16px; align-items: center; 
-        margin-bottom: 24px; font-size: 0.8rem; color: #94A3B8; 
+        margin-bottom: 20px; font-size: 0.8rem; color: #94A3B8; 
     }
     
     .stTextInput>div>div>input, .stSelectbox>div>div>div { background-color: #111827 !important; border: 1px solid #334155 !important; color: #E5E7EB !important; border-radius: 6px !important; }
@@ -65,7 +66,25 @@ st.markdown("""
     
     .bar-bg { background: #334155; height: 6px; border-radius: 3px; margin: 12px 0; overflow: hidden; }
     .bar-fg { height: 100%; background: #38BDF8; border-radius: 3px; }
-    .divider { border-top: 1px solid #334155; margin: 24px 0; }
+    .divider { border-top: 1px solid #334155; margin: 20px 0; }
+
+    /* ── 評分說明圖例 ── */
+    .score-legend {
+        display: flex; gap: 12px; flex-wrap: wrap;
+        margin-bottom: 14px;
+    }
+    .score-badge {
+        border-radius: 6px; padding: 4px 10px;
+        font-size: 0.78rem; font-weight: 600; letter-spacing: 0.03em;
+    }
+    .badge-a { background: #0f3d2e; color: #14B8A6; border: 1px solid #14B8A6; }
+    .badge-b { background: #1a3a5c; color: #38BDF8; border: 1px solid #38BDF8; }
+    .badge-c { background: #3a2f00; color: #F59E0B; border: 1px solid #F59E0B; }
+    .badge-d { background: #3a1a1a; color: #EF4444; border: 1px solid #EF4444; }
+
+    /* Expander 深色覆寫 */
+    .streamlit-expanderHeader { background: #111827 !important; border: 1px solid #334155 !important; border-radius: 8px !important; color: #E5E7EB !important; }
+    .streamlit-expanderContent { background: #0f1a2e !important; border: 1px solid #334155 !important; border-top: none !important; border-radius: 0 0 8px 8px !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -116,7 +135,7 @@ with st.container():
     with c2:
         sel_floor = st.selectbox("評估類型", ["全棟評估", "1樓店面", "4~5樓公寓", "電梯大樓"], label_visibility="collapsed")
         
-    st.markdown('<div style="color:#64748b; font-size:0.85rem; margin:10px 0;">或使用下方選單快速定位：</div>', unsafe_allow_html=True)
+    st.markdown('<div style="color:#64748b; font-size:0.85rem; margin:8px 0;">或使用下方選單快速定位：</div>', unsafe_allow_html=True)
     
     c3, c4, c5, c6 = st.columns([1, 1, 1.5, 1])
     with c3: sel_city = st.selectbox("縣市", ["--"] + list(engine.taiwan_data.keys()), label_visibility="collapsed")
@@ -135,7 +154,7 @@ with st.container():
                 if res: st.session_state.report_data = res; engine.save_to_history(); st.rerun()
 
 if not data.get("city"): st.stop()
-st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
+st.markdown("<div style='margin-bottom: 16px;'></div>", unsafe_allow_html=True)
 
 # ==========================================
 # 📍 第一層：合併專家估價卡 + 歷史實價趨勢
@@ -175,21 +194,37 @@ with c2:
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     st.markdown('</div>', unsafe_allow_html=True)
 
-st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
+st.markdown("<div style='margin-bottom: 16px;'></div>", unsafe_allow_html=True)
 
 # ==========================================
 # 📍 第二層：滿版巨型 360 街景
 # ==========================================
 g_key = data.get("google_key", "")
-sv_html = f"""<iframe width="100%" height="500" style="border:0; border-radius:12px;" loading="lazy" allowfullscreen src="https://www.google.com/maps/embed/v1/streetview?key={g_key}&location={data['lat']},{data['lon']}&heading=0&pitch=0&fov=90"></iframe>""" if g_key else "<div style='color:#64748b; height:500px; display:flex; align-items:center; justify-content:center; border:1px solid #334155; border-radius:12px;'>Street View Loading...</div>"
-st.markdown(f"""<div class="metric-card" style="padding:16px;"><span class="lbl" style="margin-left:8px;">Street View 360° (基地實境)</span>{sv_html}</div>""", unsafe_allow_html=True)
+# ✅ 修復：使用 engines 計算的正確方位角，讓街景對準建物
+sv_heading = data.get("sv_heading", 0)
 
-st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
+sv_html = (
+    f'<iframe width="100%" height="500" style="border:0; border-radius:12px;" loading="lazy" allowfullscreen '
+    f'src="https://www.google.com/maps/embed/v1/streetview?key={g_key}'
+    f'&location={data["lat"]},{data["lon"]}&heading={sv_heading}&pitch=0&fov=90"></iframe>'
+) if g_key else (
+    "<div style='color:#64748b; height:500px; display:flex; align-items:center; "
+    "justify-content:center; border:1px solid #334155; border-radius:12px;'>Street View Loading...</div>"
+)
+
+st.markdown(
+    f'<div class="metric-card" style="padding:16px;">'
+    f'<span class="lbl" style="margin-left:8px;">Street View 360° (基地實境) — Heading {sv_heading}°</span>'
+    f'{sv_html}</div>',
+    unsafe_allow_html=True
+)
+
+st.markdown("<div style='margin-bottom: 16px;'></div>", unsafe_allow_html=True)
 
 # ==========================================
 # 🗺️ 第三層：巨型雙重圖資雷達 (攔截點擊事件)
 # ==========================================
-st.markdown('<div class="lbl" style="font-size: 1.1rem; margin-bottom:12px;">Dual-Map Spatial Radar (點擊地圖任意處可同步解析新位置)</div>', unsafe_allow_html=True)
+st.markdown('<div class="lbl" style="font-size: 1.1rem; margin-bottom:10px;">Dual-Map Spatial Radar (點擊地圖任意處可同步解析新位置)</div>', unsafe_allow_html=True)
 st.markdown('<div class="metric-card" style="padding: 0; overflow:hidden;">', unsafe_allow_html=True)
 
 d_map = engine.create_dual_map(data["lat"], data["lon"], data.get("raw_pois", []))
@@ -205,7 +240,7 @@ if map_out and map_out.get("last_clicked"):
             st.rerun()
 
 st.markdown('</div>', unsafe_allow_html=True)
-st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
+st.markdown("<div style='margin-bottom: 16px;'></div>", unsafe_allow_html=True)
 
 # ==========================================
 # 📊 第四層：外部機能與環境指標
@@ -213,14 +248,16 @@ st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
 c_left, c_mid, c_right = st.columns(3)
 
 with c_left:
-    yb_val = yb.get('bikes','0')
-    yb_color = "color-danger" if yb_val == "0" or yb_val == "--" else "color-primary"
+    yb_val = yb.get('bikes', '0')
+    # ✅ 修復：bikes 可能是 int 或 str，統一轉字串比較
+    yb_val_str = str(yb_val)
+    yb_color = "color-danger" if yb_val_str in ('0', '--', '') else "color-primary"
     st.markdown(f"""
     <div class="metric-card" style="padding:24px;">
         <span class="lbl">Transit: YouBike 2.0</span>
         <div class="val-text {yb_color}" style="margin-bottom:12px;">{yb.get('station', '--')}</div>
-        <div class="sub">可用車輛：<span style="color:#fff; font-weight:bold;">{yb_val}</span> 台</div>
-        <div class="sub">直線距離：{yb.get('dist', '--')}m</div>
+        <div class="sub">可用車輛：<span style="color:#fff; font-weight:bold;">{yb_val_str}</span> 台</div>
+        <div class="sub">直線距離：{yb.get('dist', '--')}{"m" if yb.get("dist","--") != "--" else ""}</div>
     </div>""", unsafe_allow_html=True)
 
 with c_mid:
@@ -236,7 +273,11 @@ with c_mid:
     
 with c_right:
     aqi_val = env.get('aqi','--')
-    aqi_color = "color-success" if aqi_val != "--" and int(aqi_val) <= 50 else "color-warning"
+    try:
+        aqi_int = int(aqi_val)
+        aqi_color = "color-success" if aqi_int <= 50 else ("color-warning" if aqi_int <= 100 else "color-danger")
+    except:
+        aqi_color = "color-warning"
     st.markdown(f"""
     <div class="metric-card" style="padding:24px;">
         <span class="lbl">Environment: US AQI</span>
@@ -245,27 +286,113 @@ with c_right:
         <div class="sub">觀測站：衛星精確定位</div>
     </div>""", unsafe_allow_html=True)
 
-st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
+st.markdown("<div style='margin-bottom: 16px;'></div>", unsafe_allow_html=True)
 
 # ==========================================
-# 📊 第五層：機能瀑布流
+# 📊 第五層：六大機能生活圈（可展開 + 評分說明）
 # ==========================================
-st.markdown('<div class="lbl" style="font-size: 1.1rem; margin-bottom:12px;">Area Capabilities (生活圈 6 大機能解析)</div>', unsafe_allow_html=True)
 
-s = data.get("poi_scores", [0]*6); n = data.get("poi_names", [[]]*6)
+# ── 評分標準說明圖例 ──
+score_legend_html = """
+<div style="margin-bottom:10px;">
+  <div class="lbl" style="font-size:1.1rem; display:inline-block; margin-right:16px;">Area Capabilities (生活圈 6 大機能解析)</div>
+  <div class="score-legend" style="display:inline-flex; gap:10px; align-items:center; flex-wrap:wrap; vertical-align:middle;">
+    <span class="score-badge badge-a">85~100 優異</span>
+    <span class="score-badge badge-b">60~84 良好</span>
+    <span class="score-badge badge-c">35~59 普通</span>
+    <span class="score-badge badge-d">0~34 不足</span>
+    <span style="font-size:0.75rem; color:#64748b; margin-left:4px;">* 基於 Google Places 500m~1.5km 掃描密度換算</span>
+  </div>
+</div>
+"""
+st.markdown(score_legend_html, unsafe_allow_html=True)
+
+s = data.get("poi_scores", [0]*6)
+n = data.get("poi_names", [[]]*6)
 lbls = ["交通樞紐", "醫療網絡", "學區教育", "商業聚落", "休閒綠地", "消防治安"]
+icons = ["🚌", "🏥", "🎓", "🏪", "🌳", "🚒"]
 
-html_skills = '<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;">'
+def score_color(score):
+    if score >= 85: return "#14B8A6"
+    if score >= 60: return "#38BDF8"
+    if score >= 35: return "#F59E0B"
+    return "#EF4444"
+
+def score_bar_color(score):
+    if score >= 85: return "#14B8A6"
+    if score >= 60: return "#38BDF8"
+    if score >= 35: return "#F59E0B"
+    return "#EF4444"
+
+# ── 摘要 3x2 Grid（預設可見）──
+html_skills = '<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 16px;">'
 for i in range(6):
     items_str = " · ".join([re.sub(r'\(.*?\)', '', x).strip() for x in n[i][:3]]) if n[i] else "無偵測數據"
+    clr = score_color(s[i])
+    bar_clr = score_bar_color(s[i])
     html_skills += f"""
     <div class="metric-card" style="padding: 20px; height:auto;">
         <div style="display: flex; justify-content: space-between; align-items: baseline;">
-            <span class="lbl" style="margin:0; color:#E5E7EB; font-size:1rem;">{lbls[i]}</span>
-            <span style="font-size: 1.6rem; font-weight: 700; color: #38BDF8;">{s[i]}<span style="font-size:0.8rem; color:#94A3B8; font-weight:400;"> 分</span></span>
+            <span class="lbl" style="margin:0; color:#E5E7EB; font-size:1rem;">{icons[i]} {lbls[i]}</span>
+            <span style="font-size: 1.6rem; font-weight: 700; color: {clr};">{s[i]}<span style="font-size:0.8rem; color:#94A3B8; font-weight:400;"> 分</span></span>
         </div>
-        <div class="bar-bg"><div class="bar-fg" style="width:{s[i]}%;"></div></div>
+        <div class="bar-bg"><div class="bar-fg" style="width:{s[i]}%; background:{bar_clr};"></div></div>
         <div class="sub" style="font-size:0.85rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">點位：{items_str}</div>
     </div>"""
 html_skills += '</div>'
 st.markdown(html_skills, unsafe_allow_html=True)
+
+# ── 展開詳細清單 ──
+with st.expander("📋 展開六大機能生活圈詳細資訊", expanded=False):
+    st.markdown("""
+    <div style="padding: 8px 0 16px 0; color: #94A3B8; font-size: 0.85rem;">
+        以下為各機能分類的完整偵測點位清單，依距離由近至遠排序。資料來源：Google Places API 即時掃描。
+    </div>
+    """, unsafe_allow_html=True)
+
+    detail_cols = st.columns(2)
+    for i in range(6):
+        col = detail_cols[i % 2]
+        clr = score_color(s[i])
+        with col:
+            poi_items_html = ""
+            if n[i]:
+                for item in n[i]:
+                    clean = item.strip()
+                    # 提取距離
+                    dist_match = re.search(r'\((\d+)m\)', clean)
+                    dist_str = f'<span style="color:#64748b; font-size:0.8rem;"> {dist_match.group(0)}</span>' if dist_match else ''
+                    name_clean = re.sub(r'\(\d+m\)', '', clean).strip()
+                    poi_items_html += f'<div style="padding: 6px 0; border-bottom: 1px solid #1e293b; color:#E5E7EB;">• {name_clean}{dist_str}</div>'
+            else:
+                poi_items_html = '<div style="color:#64748b; padding: 6px 0;">此區域無偵測到相關設施</div>'
+
+            st.markdown(f"""
+            <div class="metric-card" style="margin-bottom: 16px; padding: 18px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <span style="font-weight:700; font-size:1rem; color:#E5E7EB;">{icons[i]} {lbls[i]}</span>
+                    <span style="font-size:1.4rem; font-weight:700; color:{clr};">{s[i]} 分</span>
+                </div>
+                <div class="bar-bg"><div class="bar-fg" style="width:{s[i]}%; background:{clr};"></div></div>
+                {poi_items_html}
+            </div>
+            """, unsafe_allow_html=True)
+
+    # ── 評分方法說明 ──
+    st.markdown("""
+    <div style="background:#111827; border:1px solid #334155; border-radius:10px; padding:18px; margin-top:8px; color:#94A3B8; font-size:0.85rem; line-height:1.8;">
+        <div style="color:#E5E7EB; font-weight:600; margin-bottom:10px;">📐 評分計算方式</div>
+        <div>本系統依據 Google Places API 在指定半徑內掃描各類設施的<b style="color:#38BDF8;">密度</b>進行換算，公式如下：</div>
+        <div style="margin:10px 0; padding: 10px 14px; background:#0B1220; border-radius:6px; font-family:monospace; color:#38BDF8;">
+            分數 = min(98, (掃描到設施數 / 4) × 100 + 35)
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:10px;">
+            <div>🚌 <b>交通樞紐</b>：transit_station，半徑 800m</div>
+            <div>🏥 <b>醫療網絡</b>：hospital，半徑 800m</div>
+            <div>🎓 <b>學區教育</b>：school，半徑 1200m</div>
+            <div>🏪 <b>商業聚落</b>：convenience_store，半徑 800m</div>
+            <div>🌳 <b>休閒綠地</b>：park，半徑 1000m（排除餐飲）</div>
+            <div>🚒 <b>消防治安</b>：police，半徑 1500m</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
