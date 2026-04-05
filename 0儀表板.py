@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-OmniUrban Decision Dashboard v10.4
+OmniUrban Decision Dashboard v10.5
 =====================================
 升級項目：
-1. 強制展開六大機能評分細節與計算標準。
-2. 修正街景圖 (Street View) 視角對不上的問題 (加入 pitch=10, fov=90)。
-3. 增加元件之間的留白調整 (Spacing)，讓版面更清爽。
+1. 門牌號碼輸入框提示文字加上「巷/弄」，引導更精準的地址輸入。
+(其餘完全保留 v10.4 之架構)
 """
 
 import streamlit as st
@@ -154,7 +153,8 @@ with st.container():
     with c5:
         roads = engine.get_roads_list(sel_city, sel_dist)
         sel_road = st.selectbox("路段", roads if roads else ["--"], disabled=(sel_dist == "--" or not roads), label_visibility="collapsed")
-    with c6: sel_num = st.text_input("門牌", placeholder="門牌號碼 (選填)", label_visibility="collapsed")
+    # 🚀 將 placeholder 修改為提示「巷/弄」
+    with c6: sel_num = st.text_input("門牌", placeholder="巷/弄/門牌號 (選填)", label_visibility="collapsed")
     
     st.write("") # 增加排版留白
     
@@ -215,7 +215,7 @@ with col2:
 st.write("") # 增加排版留白
 
 # ==========================================
-# 第二層：街景 (修正視角 pitch=10, fov=90)
+# 第二層：街景
 # ==========================================
 g_key      = data.get("google_key", "")
 sv_heading = data.get("sv_heading", 0)
@@ -259,7 +259,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 st.write("") # 增加排版留白
 
 # ==========================================
-# ✅ 第四層：YouBike 全台 + 公車動態 + AQI  (3欄)
+# 第四層：YouBike 全台 + 公車動態 + AQI
 # ==========================================
 c_left, c_mid, c_right = st.columns(3)
 
@@ -388,7 +388,6 @@ for i in range(6):
 html_grid += '</div>'
 st.markdown(html_grid, unsafe_allow_html=True)
 
-# ✅ 強制展開詳細資訊 (expanded=True)
 with st.expander("📋 點此查看：六大機能詳細點位資訊 & 評分標準", expanded=True):
     st.markdown('<div style="padding:8px 0 16px 0;color:#94A3B8;font-size:0.85rem;">各機能完整偵測點位清單（依距離排序）。資料來源：Google Places API 即時掃描。</div>', unsafe_allow_html=True)
     dc = st.columns(2)
@@ -414,7 +413,6 @@ with st.expander("📋 點此查看：六大機能詳細點位資訊 & 評分標
                 {poi_html}
             </div>""", unsafe_allow_html=True)
 
-    # 清楚列出評分標準與權重
     st.markdown("""
     <div style="background:#111827;border:1px solid #334155;border-radius:10px;padding:20px;
                 margin-top:10px;color:#94A3B8;font-size:0.85rem;line-height:1.8;">
