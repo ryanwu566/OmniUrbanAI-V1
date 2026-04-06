@@ -127,6 +127,76 @@ yb       = data.get("yb_data", {})
 bus      = data.get("bus_data", {})
 api_health = m.get("api_health", {})
 
+# ══════════════════════════════════════════════
+# 🔧 Sidebar：TDX API 診斷面板
+# ══════════════════════════════════════════════
+with st.sidebar:
+    st.markdown("### 🔧 TDX API 診斷")
+    diag = engine.tdx_diagnose()
+
+    # Client ID
+    if diag["cid_set"]:
+        st.success(f"✅ TDX_CLIENT_ID：`{diag['cid_preview']}`")
+    else:
+        st.error("❌ TDX_CLIENT_ID **未設定**")
+        st.code('[secrets]\nTDX_CLIENT_ID = "你的ID"\nTDX_CLIENT_SECRET = "你的Secret"', language="toml")
+
+    # Client Secret
+    if diag["csec_set"]:
+        st.success("✅ TDX_CLIENT_SECRET：已設定")
+    else:
+        st.error("❌ TDX_CLIENT_SECRET **未設定**")
+
+    # Token
+    if diag["token_ok"]:
+        st.success(f"✅ Token 取得成功：`{diag['token_preview']}`")
+    else:
+        st.error("❌ Token 取得失敗")
+
+    # 錯誤訊息
+    if diag["last_error"]:
+        st.markdown("**錯誤詳情：**")
+        st.code(diag["last_error"], language="text")
+        # 常見錯誤提示
+        err = diag["last_error"]
+        if "401" in err or "Unauthorized" in err:
+            st.warning("💡 Client ID 或 Secret 錯誤，請至 TDX 會員中心確認金鑰")
+        elif "找不到" in err:
+            st.warning("💡 請在 Streamlit Cloud → Settings → Secrets 加入 TDX_CLIENT_ID 和 TDX_CLIENT_SECRET")
+        elif "逾時" in err or "Timeout" in err:
+            st.warning("💡 網路無法連到 TDX，請確認部署環境可對外連線")
+
+    # 手動重置 Token 快取
+    if st.button("🔄 重置 Token 快取並重試"):
+        st.session_state.tdx_token     = None
+        st.session_state.tdx_token_exp = 0
+        st.session_state["tdx_last_error"] = ""
+        st.rerun()
+
+    st.divider()
+    st.markdown("**🔍 Streamlit 實際讀到的 Secrets**")
+    try:
+        all_keys = list(st.secrets.keys())
+        st.caption(f"所有 key：`{all_keys}`")
+        cid_raw  = st.secrets.get("TDX_CLIENT_ID",    "")
+        csec_raw = st.secrets.get("TDX_CLIENT_SECRET", "")
+        st.code(
+            f'TDX_CLIENT_ID     = "{cid_raw[:10]}…" (len={len(cid_raw)})\n'
+            f'TDX_CLIENT_SECRET = "{csec_raw[:8]}…"  (len={len(csec_raw)})',
+            language="text"
+        )
+    except Exception as ex:
+        st.error(f"讀取 secrets 失敗：{ex}")
+
+    st.divider()
+    st.markdown("**secrets.toml 範本**")
+    st.code(
+        'GOOGLE_MAPS_API_KEY = "AIza..."\n'
+        'TDX_CLIENT_ID       = "你的ClientId"\n'
+        'TDX_CLIENT_SECRET   = "你的ClientSecret"',
+        language="toml"
+    )
+
 st.markdown('<div class="hero-title">OmniUrban Spatial Engine</div>', unsafe_allow_html=True)
 st.markdown(f"""
 <div class="status-capsule">
