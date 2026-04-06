@@ -665,7 +665,14 @@ class OmniEngine:
     # ✅ 新功能：台鐵列車延誤資訊（LiveTrainDelay）
     # ──────────────────────────────────────────────────
     def get_train_delay_data(self):
-        """取得台鐵列車延誤資訊（最近30班列車）"""
+        """
+        取得台鐵列車延誤資訊
+        
+        API 說明：
+        - LiveTrainDelay 回傳格式：列車在特定車站的延誤時間
+        - 欄位：TrainNo, StationID, StationName, DelayTime, SrcUpdateTime, UpdateTime
+        - 無法獲得始發地/目的地（只有當前車站）
+        """
         token = self._get_tdx_token()
         if not token:
             return {"status": "🔴", "message": "無法取得 TDX Token", "delays": [], "source": ""}
@@ -675,47 +682,47 @@ class OmniEngine:
                 "https://tdx.transportdata.tw/api/basic/v2/Rail/TRA/LiveTrainDelay",
                 params={
                     "$format": "JSON",
-                    "$top": 30,  # 最多抓 30 班列車
-                    "$select": "TrainNo,TrainDate,Delay,Direction,OriginStationName,DestinationStationName,OverNightSite",
-                    "$orderby": "Delay desc",  # 按延誤時間降序排列
+                    "$top": 50,  # 最多抓 50 筆延誤資訊
+                    # 注意：$select 和 $orderby 都已移除，因為欄位名稱不同
                 }
             )
             
             if not delay_data or not isinstance(delay_data, list):
                 return {
-                    "status": "🟡",
-                    "message": "無延誤列車資料",
+                    "status": "🟢",
+                    "message": "目前列車準點運行，無延誤",
                     "delays": [],
-                    "source": "TDX 無即時延誤"
+                    "source": "TDX 即時 (無延誤)"
                 }
             
             # 處理延誤數據
-            processed_delays = []
-            for train in delay_data:
-                if not train.get("Delay") or train.get("Delay") <= 0:
+            processed_delays = {}
+            for record in delay_data:
+                if not record.get("DelayTime") or record.get("DelayTime") <= 0:
                     continue  # 跳過沒有延誤的列車
                 
-                train_no = train.get("TrainNo", "--")
-                delay_mins = train.get("Delay", 0)  # 延誤分鐘數
-                direction = train.get("Direction", 0)
-                orig = train.get("OriginStationName", {}).get("Zh_tw", "--") if isinstance(train.get("OriginStationName"), dict) else train.get("OriginStationName", "--")
-                dest = train.get("DestinationStationName", {}).get("Zh_tw", "--") if isinstance(train.get("DestinationStationName"), dict) else train.get("DestinationStationName", "--")
+                train_no = record.get("TrainNo", "--")
+                delay_time = record.get("DelayTime", 0)  # 延誤分鐘數
+                station_name = record.get("StationName", {})
+                station_name_str = station_name.get("Zh_tw", "--") if isinstance(station_name, dict) else str(station_name)
                 
-                # 嚴重性分級
-                if delay_mins <= 5:
-                    severity = "輕微"
-                elif delay_mins <= 15:
-                    severity = "中等"
-                else:
-                    severity = "嚴重 🚨"
-                
-                processed_delays.append({
-                    "train_no": train_no,
-                    "delay_mins": delay_mins,
-                    "severity": severity,
-                    "direction": "次列" if direction == 0 else "順列",
-                    "route": f"{orig} → {dest}",
-                })
+                # 對同一班列車，只保留最大延誤
+                if train_no not in processed_delays or delay_time > processed_delays[train_no]["delay_mins"]:
+                    # 嚴重性分級
+                    if delay_time <= 5:
+                        severity = "輕微"
+                    elif delay_time <= 15:
+                        severity = "中等"
+                    else:
+                        severity = "嚴重 🚨"
+                    
+                    processed_delays[train_no] = {
+                        "train_no": train_no,
+                        "delay_mins": delay_time,
+                        "severity": severity,
+                        "station": station_name_str,  # 當前車站
+                        "update_time": record.get("UpdateTime", ""),
+                    }
             
             if not processed_delays:
                 return {
@@ -725,10 +732,13 @@ class OmniEngine:
                     "source": "TDX 即時 (無延誤)"
                 }
             
+            # 按延誤時間排序
+            sorted_delays = sorted(processed_delays.values(), key=lambda x: x["delay_mins"], reverse=True)
+            
             return {
-                "status": "🟡" if len(processed_delays) <= 5 else "🔴",
-                "message": f"偵測 {len(processed_delays)} 班延誤列車",
-                "delays": processed_delays,
+                "status": "🟡" if len(sorted_delays) <= 5 else "🔴",
+                "message": f"偵測 {len(sorted_delays)} 班延誤列車",
+                "delays": sorted_delays,
                 "source": "TDX 即時動態"
             }
             

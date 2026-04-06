@@ -627,7 +627,7 @@ with cp3:
             train_no = delay.get('train_no', '--')
             delay_mins = delay.get('delay_mins', 0)
             severity = delay.get('severity', '--')
-            route = delay.get('route', '--')
+            station = delay.get('station', '--')  # 修復：改用 station 欄位
             
             # 顏色根據延誤分級
             if "嚴重" in severity:
@@ -640,9 +640,12 @@ with cp3:
             tr_rows += f"""<div class='bus-row'>
                 <span style='color:#E5E7EB;font-weight:600;'>{train_no}</span>
                 <span style='color:{delay_color};font-weight:700;'>{delay_mins}分 {severity}</span>
+            </div>
+            <div class='bus-row' style='border-bottom:none;padding-top:2px;'>
+                <span style='color:#64748b;font-size:0.75rem;'>📍 {station}</span>
             </div>"""
         
-        tr_detail = f"<div class='bus-board' style='margin-top:12px;'>{tr_rows}<div class='bus-row' style='border-bottom:none;color:#64748b;font-size:0.75rem;'>{tr_message}</div></div>"
+        tr_detail = f"<div class='bus-board' style='margin-top:12px;'>{tr_rows}</div>"
     else:
         tr_detail = "<div class='bus-board'><div class='bus-row' style='color:#14B8A6;text-align:center;justify-content:center;font-weight:600;'>✅ 列車準點運行</div></div>"
 
