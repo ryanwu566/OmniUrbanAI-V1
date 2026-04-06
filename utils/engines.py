@@ -118,45 +118,71 @@ class OmniEngine:
         now = time.time()
         if st.session_state.tdx_token and now < st.session_state.tdx_token_exp - 60:
             return st.session_state.tdx_token
-        
-        cid = st.secrets.get("TDX_CLIENT_ID", "")
+
+        cid  = st.secrets.get("TDX_CLIENT_ID", "")
         csec = st.secrets.get("TDX_CLIENT_SECRET", "")
-        if not cid or not csec: return None
-        
+        if not cid or not csec:
+            return None
+
         try:
-            headers = {'content-type': 'application/x-www-form-urlencoded'}
-            data = {"grant_type": "client_credentials", "client_id": cid, "client_secret": csec}
-            r = self.http.post(
+            # ✅ 用獨立 requests 呼叫，避免 self.http session 的 User-Agent 干擾
+            #    content-type 必須是 application/x-www-form-urlencoded（官方規範）
+            r = requests.post(
                 "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
-                data=data, headers=headers, timeout=8
+                headers={"content-type": "application/x-www-form-urlencoded"},
+                data={
+                    "grant_type":    "client_credentials",
+                    "client_id":     cid,
+                    "client_secret": csec,
+                },
+                timeout=10
             )
             r.raise_for_status()
             j = r.json()
-            st.session_state.tdx_token = j["access_token"]
+            st.session_state.tdx_token     = j["access_token"]
             st.session_state.tdx_token_exp = now + j.get("expires_in", 86400)
             return st.session_state.tdx_token
         except Exception as e:
-            print("TDX Auth Error:", e)
+            print(f"[TDX] Auth Error: {e}")
+            st.session_state.tdx_token = None
             return None
 
-    def _tdx_get(self, url, params=None, timeout=8):
+    def _tdx_get(self, url, params=None, timeout=10):
+        def _build_headers(tok):
+            return {
+                "Authorization":   f"Bearer {tok}",
+                "Accept-Encoding": "gzip, br",
+                "Accept":          "application/json",
+            }
+
         token = self._get_tdx_token()
-        headers = {
-            "authorization": f"Bearer {token}",
-            "Accept-Encoding": "gzip"
-        } if token else {}
-        
+        if not token:
+            print(f"[TDX] No token available, skip: {url}")
+            return None
+
         try:
-            r = self.http.get(url, headers=headers, params=params, timeout=timeout)
+            r = self.http.get(url, headers=_build_headers(token),
+                              params=params, timeout=timeout)
+
+            # ✅ 401 → 強制清除快取 token 並重取一次
             if r.status_code == 401:
-                st.session_state.tdx_token = None
+                print("[TDX] 401 received, refreshing token...")
+                st.session_state.tdx_token     = None
+                st.session_state.tdx_token_exp = 0
                 token = self._get_tdx_token()
-                headers["authorization"] = f"Bearer {token}"
-                r = self.http.get(url, headers=headers, params=params, timeout=timeout)
+                if not token:
+                    return None
+                r = self.http.get(url, headers=_build_headers(token),
+                                  params=params, timeout=timeout)
+
+            if r.status_code == 429:
+                print(f"[TDX] 429 Rate limit on {url}")
+                return None
+
             r.raise_for_status()
             return r.json()
         except Exception as e:
-            print(f"TDX GET Error ({url}):", e)
+            print(f"[TDX] GET Error ({url}): {e}")
             return None
 
     # ──────────────────────────────────────────────────
@@ -184,46 +210,66 @@ class OmniEngine:
         token = self._get_tdx_token()
         if token:
             try:
-                # 抓取附近站點 (前 20 個)
-                url_station = "https://tdx.transportdata.tw/api/basic/v2/Bike/Station/NearBy"
-                stations = self._tdx_get(url_station, params={"$spatialFilter": f"nearby({lat},{lon},1200)", "$format": "JSON", "$top": 20})
-                
+                # ✅ 加 $select 縮小回傳欄位，避免超出免費方案資料量限制
+                stations = self._tdx_get(
+                    "https://tdx.transportdata.tw/api/basic/v2/Bike/Station/NearBy",
+                    params={
+                        "$spatialFilter": f"nearby({lat},{lon},1200)",
+                        "$format":        "JSON",
+                        "$top":           20,
+                        "$select":        "StationUID,StationName,StationPosition",
+                    }
+                )
+
                 if stations and isinstance(stations, list):
                     def _d(s):
                         p = s.get("StationPosition", {})
-                        return self.calc_real_dist(lat, lon, p.get("PositionLat", 0), p.get("PositionLon", 0))
-                    
+                        return self.calc_real_dist(lat, lon,
+                                                   p.get("PositionLat", 0),
+                                                   p.get("PositionLon", 0))
+
                     stations.sort(key=_d)
-                    
-                    # 🚀 突破限制：直接抓取半徑內所有動態 (拉高 top 數量確保不會漏掉)
-                    url_avail = "https://tdx.transportdata.tw/api/basic/v2/Bike/Availability/NearBy"
-                    avails = self._tdx_get(url_avail, params={"$spatialFilter": f"nearby({lat},{lon},1200)", "$format": "JSON", "$top": 200}) or []
+
+                    # ✅ 同樣加 $select 只抓可借/可還數量
+                    avails = self._tdx_get(
+                        "https://tdx.transportdata.tw/api/basic/v2/Bike/Availability/NearBy",
+                        params={
+                            "$spatialFilter": f"nearby({lat},{lon},1200)",
+                            "$format":        "JSON",
+                            "$top":           50,
+                            "$select":        "StationUID,AvailableRentBikes,AvailableReturnBikes",
+                        }
+                    ) or []
                     avail_map = {a.get("StationUID"): a for a in avails}
 
                     nearby = []
                     for s in stations[:6]:
-                        uid = s.get("StationUID", "")
-                        name = (s.get("StationName", {}).get("Zh_tw", "--").replace("YouBike2.0_", "").replace("YouBike 2.0_", ""))
+                        uid  = s.get("StationUID", "")
+                        name = (s.get("StationName", {}).get("Zh_tw", "--")
+                                .replace("YouBike2.0_", "")
+                                .replace("YouBike 2.0_", ""))
                         d = _d(s)
-                        
-                        # 從字典精確配對
                         a = avail_map.get(uid, {})
-                        bikes = str(a.get("AvailableRentBikes", 0)) if a else "0"
-                        empty = str(a.get("AvailableReturnBikes", 0)) if a else "0"
-                        
-                        nearby.append({"name": name, "dist": d, "bikes": bikes, "empty": empty})
+                        bikes = str(a.get("AvailableRentBikes",  0)) if a else "?"
+                        empty = str(a.get("AvailableReturnBikes", 0)) if a else "?"
+                        nearby.append({"name": name, "dist": d,
+                                       "bikes": bikes, "empty": empty})
 
                     if nearby:
-                        closest = nearby[0]
+                        c = nearby[0]
                         return {
-                            "status": "🟢", "station": closest['name'], "dist": closest['dist'], 
-                            "bikes": closest['bikes'], "empty_slots": closest['empty'], "source": "TDX 全台即時", 
-                            "nearby_stations": nearby
+                            "status": "🟢", "station": c["name"], "dist": c["dist"],
+                            "bikes": c["bikes"], "empty_slots": c["empty"],
+                            "source": "TDX 全台即時", "nearby_stations": nearby
                         }
             except Exception as e:
-                pass
+                print(f"[TDX] YouBike Error: {e}")
 
-        return {"status": "🔴", "station": "連線失敗或無資料", "dist": "--", "bikes": "0", "empty_slots": "--", "source": "API 異常", "nearby_stations": []}
+        return {
+            "status": "🔴", "station": "連線失敗或無資料", "dist": "--",
+            "bikes": "0", "empty_slots": "--", "source": "API 異常",
+            "nearby_stations": []
+        }
 
     # ──────────────────────────────────────────────────
     # ✅ TDX 公車 (徹底修復漏班與排序問題)
@@ -232,95 +278,165 @@ class OmniEngine:
         token = self._get_tdx_token()
         if not token:
             return self._bus_google_fallback(lat, lon)
-            
-        try:
-            radius = 800 
-            url_station = "https://tdx.transportdata.tw/api/basic/v2/Bus/Station/NearBy"
 
-            stations = self._tdx_get(
-                url_station,
-                params={"$spatialFilter": f"nearby({lat},{lon},{radius})", "$format": "JSON", "$top": 20}
+        try:
+            # ✅ 正確 endpoint：Bus/Stop/NearBy（不是 Station/NearBy）
+            #    Station 是「公車站位」，Stop 是「公車站牌」，ETA 綁定的是 Stop
+            stops = self._tdx_get(
+                "https://tdx.transportdata.tw/api/basic/v2/Bus/Stop/NearBy",
+                params={
+                    "$spatialFilter": f"nearby({lat},{lon},600)",
+                    "$format":        "JSON",
+                    "$top":           30,
+                    "$select":        "StopUID,StopName,StopPosition,RouteName",
+                }
             )
 
-            if not stations: 
+            # 600m 找不到就擴大到 1000m
+            if not stops:
+                stops = self._tdx_get(
+                    "https://tdx.transportdata.tw/api/basic/v2/Bus/Stop/NearBy",
+                    params={
+                        "$spatialFilter": f"nearby({lat},{lon},1000)",
+                        "$format":        "JSON",
+                        "$top":           30,
+                        "$select":        "StopUID,StopName,StopPosition,RouteName",
+                    }
+                )
+
+            if not stops:
                 return self._bus_google_fallback(lat, lon)
 
             def _d(s):
-                p = s.get("StationPosition", {})
-                return self.calc_real_dist(lat, lon, p.get("PositionLat", 0), p.get("PositionLon", 0))
+                p = s.get("StopPosition", {})
+                return self.calc_real_dist(lat, lon,
+                                           p.get("PositionLat", 0),
+                                           p.get("PositionLon", 0))
 
-            nearest_station = min(stations, key=_d)
-            nearest_name = nearest_station.get("StationName", {}).get("Zh_tw", "--")
-            nearest_dist = _d(nearest_station)
+            stops.sort(key=_d)
+            nearest      = stops[0]
+            nearest_name = nearest.get("StopName", {}).get("Zh_tw", "--")
+            nearest_dist = _d(nearest)
 
-            # 🚀 精確萃取該站牌底下所有的 StopUID，確保雙向不漏接
-            stop_uids = [stop.get("StopUID") for stop in nearest_station.get("Stops", [])]
+            # 收集附近所有 StopUID（用於精確配對 ETA）
+            stop_uid_set = {s.get("StopUID") for s in stops if s.get("StopUID")}
 
-            # 🚀 突破限制：直接抓取大範圍所有班次 (Top 300)
-            url_eta = "https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/NearBy"
+            # ✅ ETA：用 Stop/NearBy 同半徑抓取，加 $select 縮減流量
             etas = self._tdx_get(
-                url_eta,
-                params={"$spatialFilter": f"nearby({lat},{lon},{radius})", "$format": "JSON", "$top": 300}
+                "https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/NearBy",
+                params={
+                    "$spatialFilter": f"nearby({lat},{lon},600)",
+                    "$format":        "JSON",
+                    "$top":           100,
+                    "$select":        "StopUID,RouteName,EstimateTime,StopStatus,Direction,PlateNumb",
+                }
             ) or []
 
-            # 透過 UID 精確配對過濾
-            if stop_uids:
-                target_etas = [e for e in etas if e.get("StopUID") in stop_uids]
-            else:
-                target_etas = [e for e in etas if e.get("StopName", {}).get("Zh_tw") == nearest_name]
+            # 用 StopUID 精確配對
+            matched = [e for e in etas if e.get("StopUID") in stop_uid_set]
+            # 若配對為空（部分縣市 UID 格式不同），退回全部 ETA
+            if not matched:
+                matched = etas
 
             route_map = {}
-            for e in target_etas:
-                rname = e.get("RouteName", {}).get("Zh_tw", "")
+            for e in matched:
+                rname  = e.get("RouteName", {}).get("Zh_tw", "")
                 if not rname: continue
-                
-                status = e.get("StopStatus", 0) 
-                est = e.get("EstimateTime")
-                direction = e.get("Direction", 0)
-                plate = e.get("PlateNumb", "")
-                
-                # 🚀 修復：使用真實分鐘數作為排序權重 (urgency)
+                status = e.get("StopStatus", 0)
+                est    = e.get("EstimateTime")   # 秒
+                direc  = e.get("Direction", 0)
+                plate  = e.get("PlateNumb", "")
+
                 if status == 0 and est is not None:
                     mins = int(est) // 60
-                    if mins == 0: label, urgency = "進站中 🚌", 0
+                    if   mins == 0: label, urgency = "進站中 🚌", 0
                     elif mins <= 3: label, urgency = f"{mins} 分鐘 ⚡", mins
-                    else: label, urgency = f"{mins} 分鐘", mins
-                elif status == 1: label, urgency = "尚未發車", 9991
-                elif status == 2: label, urgency = "交管不停", 9992
-                elif status == 3: label, urgency = "末班已過", 9993
+                    else:           label, urgency = f"{mins} 分鐘",    mins
+                elif status == 1: label, urgency = "尚未發車",  9991
+                elif status == 2: label, urgency = "交管不停",  9992
+                elif status == 3: label, urgency = "末班已過",  9993
                 elif status == 4: label, urgency = "今日未營運", 9994
-                else: label, urgency = "無資料", 9999
-                
-                key = f"{rname}_{direction}"
+                else:             label, urgency = "無資料",    9999
+
+                key = f"{rname}_{direc}"
                 if key not in route_map or urgency < route_map[key]["urgency"]:
                     route_map[key] = {
-                        "label": label, "urgency": urgency,
-                        "plate": plate, "dir": "去程" if direction == 0 else "返程",
-                        "route": rname
+                        "route":   rname,
+                        "label":   label,
+                        "urgency": urgency,
+                        "plate":   plate,
+                        "dir":     "去程" if direc == 0 else "返程",
                     }
-            
-            arrivals = sorted(list(route_map.values()), key=lambda x: x["urgency"])
 
-            # 軌道運輸置頂
+            arrivals = sorted(route_map.values(), key=lambda x: x["urgency"])
+
+            # ✅ 軌道置頂：台鐵
             try:
-                tra = self._tdx_get("https://tdx.transportdata.tw/api/basic/v2/Rail/TRA/Station/NearBy", params={"$spatialFilter": f"nearby({lat},{lon},1500)", "$format": "JSON"})
-                if tra:
-                    closest_tra = min(tra, key=lambda x: self.calc_real_dist(lat, lon, x.get("StationPosition",{}).get("PositionLat",0), x.get("StationPosition",{}).get("PositionLon",0)))
-                    tra_dist = self.calc_real_dist(lat, lon, closest_tra.get("StationPosition",{}).get("PositionLat",0), closest_tra.get("StationPosition",{}).get("PositionLon",0))
-                    arrivals.insert(0, {"route": f"🚆 台鐵{closest_tra.get('StationName', {}).get('Zh_tw', '')}站", "dir": f"{tra_dist}m", "label": "軌道運輸", "urgency": -2, "plate": ""})
-                else:
-                    mrt = self._tdx_get("https://tdx.transportdata.tw/api/basic/v2/Rail/Metro/Station/NearBy", params={"$spatialFilter": f"nearby({lat},{lon},1500)", "$format": "JSON"})
-                    if mrt:
-                        closest_mrt = min(mrt, key=lambda x: self.calc_real_dist(lat, lon, x.get("StationPosition",{}).get("PositionLat",0), x.get("StationPosition",{}).get("PositionLon",0)))
-                        mrt_dist = self.calc_real_dist(lat, lon, closest_mrt.get("StationPosition",{}).get("PositionLat",0), closest_mrt.get("StationPosition",{}).get("PositionLon",0))
-                        arrivals.insert(0, {"route": f"🚇 捷運{closest_mrt.get('StationName', {}).get('Zh_tw', '')}站", "dir": f"{mrt_dist}m", "label": "捷運路網", "urgency": -1, "plate": ""})
+                tra_list = self._tdx_get(
+                    "https://tdx.transportdata.tw/api/basic/v2/Rail/TRA/Station/NearBy",
+                    params={
+                        "$spatialFilter": f"nearby({lat},{lon},1500)",
+                        "$format": "JSON", "$top": 3,
+                        "$select": "StationName,StationPosition",
+                    }
+                )
+                if tra_list:
+                    t = min(tra_list, key=lambda x: self.calc_real_dist(
+                        lat, lon,
+                        x.get("StationPosition", {}).get("PositionLat", 0),
+                        x.get("StationPosition", {}).get("PositionLon", 0)
+                    ))
+                    td = self.calc_real_dist(
+                        lat, lon,
+                        t.get("StationPosition", {}).get("PositionLat", 0),
+                        t.get("StationPosition", {}).get("PositionLon", 0)
+                    )
+                    arrivals.insert(0, {
+                        "route": f"🚆 台鐵 {t.get('StationName',{}).get('Zh_tw','')}站",
+                        "dir": f"{td}m 步行", "label": "軌道運輸",
+                        "urgency": -2, "plate": ""
+                    })
             except: pass
 
-            if not arrivals:
-                return {"status": "🟡", "station": nearest_name, "dist": nearest_dist, "arrivals": [], "source": "TDX (目前無班次)"}
+            # ✅ 軌道置頂：捷運（台北捷運為例，其他縣市會自動 fallback 無結果）
+            try:
+                mrt_list = self._tdx_get(
+                    "https://tdx.transportdata.tw/api/basic/v2/Rail/Metro/Station/NearBy",
+                    params={
+                        "$spatialFilter": f"nearby({lat},{lon},1500)",
+                        "$format": "JSON", "$top": 3,
+                        "$select": "StationName,StationPosition",
+                    }
+                )
+                if mrt_list:
+                    mt = min(mrt_list, key=lambda x: self.calc_real_dist(
+                        lat, lon,
+                        x.get("StationPosition", {}).get("PositionLat", 0),
+                        x.get("StationPosition", {}).get("PositionLon", 0)
+                    ))
+                    md = self.calc_real_dist(
+                        lat, lon,
+                        mt.get("StationPosition", {}).get("PositionLat", 0),
+                        mt.get("StationPosition", {}).get("PositionLon", 0)
+                    )
+                    arrivals.insert(0, {
+                        "route": f"🚇 捷運 {mt.get('StationName',{}).get('Zh_tw','')}站",
+                        "dir": f"{md}m 步行", "label": "捷運路網",
+                        "urgency": -1, "plate": ""
+                    })
+            except: pass
 
-            return {"status": "🟢", "station": nearest_name, "dist": nearest_dist, "arrivals": arrivals, "source": "TDX 即時動態"}
+            src = "TDX 即時動態" if route_map else "TDX (目前無班次資料)"
+            return {
+                "status":   "🟢" if route_map else "🟡",
+                "station":  nearest_name,
+                "dist":     nearest_dist,
+                "arrivals": arrivals,
+                "source":   src,
+            }
+
         except Exception as e:
+            print(f"[TDX] Bus Error: {e}")
             return self._bus_google_fallback(lat, lon)
 
     def _bus_google_fallback(self, lat, lon):
