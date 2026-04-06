@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-OmniUrban Decision Dashboard v10.5
+OmniUrban Decision Dashboard v10.8
 =====================================
 升級項目：
-1. 門牌號碼輸入框提示文字加上「巷/弄」，引導更精準的地址輸入。
-(其餘完全保留 v10.4 之架構)
+1. 公車看板改為 `<details>` 原生 HTML 下拉選單。
+2. 捲軸美化，支援無上限班次展開。
+(其餘功能與版面完全不動)
 """
 
 import streamlit as st
@@ -63,10 +64,10 @@ st.markdown("""
     .bar-fg { height: 100%; background: #38BDF8; border-radius: 3px; }
     .divider { border-top: 1px solid #334155; margin: 20px 0; }
 
-    /* ── 公車動態看板 ── */
+    /* ── 公車動態看板與下拉選單 ── */
     .bus-board {
         background: #0B1220; border: 1px solid #1e293b; border-radius: 8px;
-        padding: 10px 0; margin-top: 10px;
+        padding: 5px 0;
     }
     .bus-row {
         display: flex; justify-content: space-between; align-items: center;
@@ -84,6 +85,13 @@ st.markdown("""
         display: inline-block; font-size: 0.72rem; color: #64748b;
         border: 1px solid #334155; border-radius: 4px; padding: 1px 6px; margin-left: 8px;
     }
+    
+    /* 🚀 隱藏 details 預設三角形並美化捲軸 */
+    details > summary { list-style: none; }
+    details > summary::-webkit-details-marker { display: none; }
+    .bus-board::-webkit-scrollbar { width: 5px; }
+    .bus-board::-webkit-scrollbar-track { background: transparent; }
+    .bus-board::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
 
     /* ── YouBike 數字格 ── */
     .yb-stats { display: flex; gap: 20px; margin-top: 14px; }
@@ -144,7 +152,7 @@ with st.container():
     with c2:
         sel_floor = st.selectbox("評估類型", ["全棟評估", "1樓店面", "4~5樓公寓", "電梯大樓"], label_visibility="collapsed")
     
-    st.write("") # 增加排版留白
+    st.write("") 
     
     st.markdown('<div style="color:#64748b; font-size:0.85rem; margin:8px 0;">或使用下方選單快速定位：</div>', unsafe_allow_html=True)
     c3, c4, c5, c6 = st.columns([1, 1, 1.5, 1])
@@ -153,10 +161,9 @@ with st.container():
     with c5:
         roads = engine.get_roads_list(sel_city, sel_dist)
         sel_road = st.selectbox("路段", roads if roads else ["--"], disabled=(sel_dist == "--" or not roads), label_visibility="collapsed")
-    # 🚀 將 placeholder 修改為提示「巷/弄」
     with c6: sel_num = st.text_input("門牌", placeholder="巷/弄/門牌號 (選填)", label_visibility="collapsed")
     
-    st.write("") # 增加排版留白
+    st.write("") 
     
     if st.button("啟動特徵空間分析 (RUN ANALYSIS)"):
         final_target = manual_addr if manual_addr else f"{sel_city}{sel_dist}{sel_road if not sel_road.startswith('--') else ''}{sel_num}"
@@ -212,7 +219,7 @@ with col2:
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     st.markdown('</div>', unsafe_allow_html=True)
 
-st.write("") # 增加排版留白
+st.write("") 
 
 # ==========================================
 # 第二層：街景
@@ -235,7 +242,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.write("") # 增加排版留白
+st.write("") 
 
 # ==========================================
 # 第三層：雙重地圖
@@ -256,7 +263,7 @@ if map_out and map_out.get("last_clicked"):
             st.rerun()
 st.markdown('</div>', unsafe_allow_html=True)
 
-st.write("") # 增加排版留白
+st.write("") 
 
 # ==========================================
 # 第四層：YouBike 全台 + 公車動態 + AQI
@@ -298,6 +305,7 @@ with c_mid:
     bus_status = bus.get('status', '🔴')
     bus_dist_str = f"{bus_dist}m" if bus_dist not in ('--', '') else "--"
 
+    # 🚀 使用 HTML <details> 下拉式選單顯示全部班次
     if arrivals:
         rows_html = ""
         for a in arrivals:
@@ -311,7 +319,17 @@ with c_mid:
                 <div><span class="bus-route">{a['route']}</span>{dir_str}{plate_str}</div>
                 <div class="{eta_cls}">{a['label']}</div>
             </div>"""
-        board = f'<div class="bus-board">{rows_html}</div>'
+            
+        board = f"""
+        <details style="margin-top: 8px;">
+            <summary style="cursor: pointer; color: #38BDF8; font-size: 0.85rem; font-weight: 600; padding: 6px 0; outline: none;">
+                👇 點擊展開所有路線 ({len(arrivals)} 班次)
+            </summary>
+            <div class="bus-board" style="max-height: 200px; overflow-y: auto; margin-top: 4px;">
+                {rows_html}
+            </div>
+        </details>
+        """
     else:
         no_data_msg = "TDX 未設定，顯示靜態站名" if "Google" in bus_src else "此區域暫無動態資料"
         board = f'<div class="bus-board"><div class="bus-row" style="color:#475569;">{no_data_msg}</div></div>'
@@ -342,7 +360,7 @@ with c_right:
         <div class="sub">觀測站：衛星精確定位</div>
     </div>""", unsafe_allow_html=True)
 
-st.write("") # 增加排版留白
+st.write("") 
 
 # ==========================================
 # 第五層：六大機能生活圈
