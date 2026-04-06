@@ -3,7 +3,7 @@
 OmniUrban Decision Dashboard v10.9
 =====================================
 升級項目：
-1. YouBike 新增多站點下拉清單，支援周邊 5 個站點資訊。
+1. 修復 HTML 標籤因 Markdown 縮排被誤判為程式碼區塊的 Bug。
 (其餘功能與版面完全不動)
 """
 
@@ -174,9 +174,6 @@ if not data.get("city"): st.stop()
 st.write("")
 st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
-# ==========================================
-# 第一層：估價 + 歷史趨勢
-# ==========================================
 cs_data = m.get("core_summary", {})
 col1, col2 = st.columns(2)
 with col1:
@@ -216,9 +213,6 @@ with col2:
 
 st.write("") 
 
-# ==========================================
-# 第二層：街景
-# ==========================================
 g_key      = data.get("google_key", "")
 sv_heading = data.get("sv_heading", 0)
 sv_html = (
@@ -239,9 +233,6 @@ st.markdown(
 
 st.write("") 
 
-# ==========================================
-# 第三層：雙重地圖
-# ==========================================
 st.markdown('<div class="lbl" style="font-size:1.1rem;margin-bottom:10px;">Dual-Map Spatial Radar (點擊地圖任意處可同步解析新位置)</div>', unsafe_allow_html=True)
 st.markdown('<div class="metric-card" style="padding:0;overflow:hidden;">', unsafe_allow_html=True)
 d_map = engine.create_dual_map(data["lat"], data["lon"], data.get("raw_pois", []))
@@ -260,12 +251,8 @@ st.markdown('</div>', unsafe_allow_html=True)
 
 st.write("") 
 
-# ==========================================
-# 第四層：YouBike 全台 + 公車動態 + AQI
-# ==========================================
 c_left, c_mid, c_right = st.columns(3)
 
-# ── YouBike ──────────────────────────────
 with c_left:
     yb_bikes = str(yb.get('bikes', '0'))
     yb_empty = str(yb.get('empty_slots', '--'))
@@ -275,29 +262,16 @@ with c_left:
     yb_color = "color-primary" if has_bikes else "color-danger"
     yb_dist_str = f"{yb_dist}m" if yb_dist not in ('--', '') else "--"
 
-    # 🚀 YouBike 新增多站點下拉清單
+    # 🚀 壓平字串，防止 Markdown 縮排錯誤
     yb_nearby = yb.get('nearby_stations', [])
     yb_board = ""
     if yb_nearby and len(yb_nearby) > 1:
         yb_rows = ""
-        for s in yb_nearby[1:]: # 排除第一個(已經顯示在上方了)
+        for s in yb_nearby[1:]: 
             c = "#14B8A6" if int(s['bikes']) > 0 else "#EF4444"
-            yb_rows += f"""
-            <div class="bus-row">
-                <div><span class="bus-route">{s['name']}</span><span class='bus-dir'>({s['dist']}m)</span></div>
-                <div style="color:{c}; font-weight:700; font-size:0.9rem;">{s['bikes']} 輛 <span style="color:#64748b;font-weight:400;font-size:0.75rem;">/ {s['empty']} 空</span></div>
-            </div>"""
+            yb_rows += f"<div class='bus-row'><div><span class='bus-route'>{s['name']}</span><span class='bus-dir'>({s['dist']}m)</span></div><div style='color:{c}; font-weight:700; font-size:0.9rem;'>{s['bikes']} 輛 <span style='color:#64748b;font-weight:400;font-size:0.75rem;'>/ {s['empty']} 空</span></div></div>"
             
-        yb_board = f"""
-        <details style="margin-top: 12px;">
-            <summary style="cursor: pointer; color: #38BDF8; font-size: 0.85rem; font-weight: 600; padding: 6px 0; outline: none;">
-                👇 附近其他 {len(yb_nearby)-1} 個站點
-            </summary>
-            <div class="bus-board" style="max-height: 160px; overflow-y: auto; margin-top: 4px;">
-                {yb_rows}
-            </div>
-        </details>
-        """
+        yb_board = f"<details style='margin-top: 12px;'><summary style='cursor: pointer; color: #38BDF8; font-size: 0.85rem; font-weight: 600; padding: 6px 0; outline: none;'>👇 附近其他 {len(yb_nearby)-1} 個站點</summary><div class='bus-board' style='max-height: 160px; overflow-y: auto; margin-top: 4px;'>{yb_rows}</div></details>"
 
     st.markdown(f"""
     <div class="metric-card" style="padding:24px;">
@@ -317,14 +291,13 @@ with c_left:
         {yb_board}
     </div>""", unsafe_allow_html=True)
 
-# ── 公車動態看板 ──────────────────────────
 with c_mid:
     bus_dist   = bus.get('dist', '--')
     bus_src    = bus.get('source', '')
     arrivals   = bus.get('arrivals', [])
-    bus_status = bus.get('status', '🔴')
     bus_dist_str = f"{bus_dist}m" if bus_dist not in ('--', '') else "--"
 
+    # 🚀 壓平字串，防止 Markdown 縮排錯誤
     if arrivals:
         rows_html = ""
         for a in arrivals:
@@ -333,22 +306,9 @@ with c_mid:
             plate   = a.get('plate', '')
             plate_str = f"<span style='color:#475569;font-size:0.75rem;'> [{plate}]</span>" if plate and plate != "noPlate" else ""
             dir_str = f"<span class='bus-dir'>({a.get('dir','')})</span>"
-            rows_html += f"""
-            <div class="bus-row">
-                <div><span class="bus-route">{a['route']}</span>{dir_str}{plate_str}</div>
-                <div class="{eta_cls}">{a['label']}</div>
-            </div>"""
+            rows_html += f"<div class='bus-row'><div><span class='bus-route'>{a['route']}</span>{dir_str}{plate_str}</div><div class='{eta_cls}'>{a['label']}</div></div>"
             
-        board = f"""
-        <details style="margin-top: 8px;">
-            <summary style="cursor: pointer; color: #38BDF8; font-size: 0.85rem; font-weight: 600; padding: 6px 0; outline: none;">
-                👇 點擊展開所有路線 ({len(arrivals)} 班次)
-            </summary>
-            <div class="bus-board" style="max-height: 200px; overflow-y: auto; margin-top: 4px;">
-                {rows_html}
-            </div>
-        </details>
-        """
+        board = f"<details style='margin-top: 8px;'><summary style='cursor: pointer; color: #38BDF8; font-size: 0.85rem; font-weight: 600; padding: 6px 0; outline: none;'>👇 點擊展開所有路線 ({len(arrivals)} 班次)</summary><div class='bus-board' style='max-height: 200px; overflow-y: auto; margin-top: 4px;'>{rows_html}</div></details>"
     else:
         no_data_msg = "TDX 未設定，顯示靜態站名" if "Google" in bus_src else "此區域暫無動態資料"
         board = f'<div class="bus-board"><div class="bus-row" style="color:#475569;">{no_data_msg}</div></div>'
@@ -361,7 +321,6 @@ with c_mid:
         {board}
     </div>""", unsafe_allow_html=True)
 
-# ── AQI ──────────────────────────────────
 with c_right:
     aqi_val = env.get('aqi', '--')
     try:
@@ -381,9 +340,6 @@ with c_right:
 
 st.write("") 
 
-# ==========================================
-# 第五層：六大機能生活圈
-# ==========================================
 st.markdown("""
 <div style="margin-bottom:10px;">
   <span class="lbl" style="font-size:1.1rem;display:inline-block;margin-right:16px;">Area Capabilities (生活圈 6 大機能解析)</span>
@@ -408,7 +364,6 @@ def score_color(sc):
     if sc >= 35: return "#F59E0B"
     return "#EF4444"
 
-# 摘要 3x2 Grid
 html_grid = '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px;">'
 for i in range(6):
     items = " · ".join([re.sub(r'\(.*?\)', '', x).strip() for x in n[i][:3]]) if n[i] else "無偵測數據"
