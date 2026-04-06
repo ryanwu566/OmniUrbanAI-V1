@@ -131,54 +131,42 @@ class OmniEngine:
         return None
 
     # ──────────────────────────────────────────────────
-    # ✅ TDX 診斷面板（修復：原版缺少此方法導致 sidebar 崩潰）
+    # ✅ TDX 診斷面板（隱私安全版）
     # ──────────────────────────────────────────────────
     def tdx_diagnose(self) -> dict:
         """
-        回傳 TDX 設定與 Token 狀態的診斷字典，供 sidebar 顯示。
-        原版 engines.py 完全缺少此方法，是 API 異常的根本原因之一。
+        回傳 TDX 設定與 Token 狀態的診斷字典，供 sidebar 顯示（已移除所有金鑰明文）。
         """
         cid  = st.secrets.get("TDX_CLIENT_ID", "")
         csec = st.secrets.get("TDX_CLIENT_SECRET", "")
 
         cid_set   = bool(cid)
         csec_set  = bool(csec)
-        cid_preview = f"{cid[:6]}…{cid[-4:]}" if len(cid) > 10 else cid
 
-        # 嘗試取得 token（使用已快取的或重新取得）
+        # 嘗試取得 token
         token = self._get_tdx_token()
         token_ok = bool(token)
-        token_preview = f"{token[:12]}…" if token and len(token) > 12 else (token or "")
-
         last_error = st.session_state.get("tdx_last_error", "")
 
         return {
             "cid_set":       cid_set,
             "csec_set":      csec_set,
-            "cid_preview":   cid_preview,
             "token_ok":      token_ok,
-            "token_preview": token_preview,
             "last_error":    last_error,
         }
 
     # ──────────────────────────────────────────────────
-    # ✅ TDX 即時測試（強制繞過快取，回傳完整診斷資訊）
+    # ✅ TDX 即時測試（隱私安全版）
     # ──────────────────────────────────────────────────
     def tdx_test_token(self) -> dict:
         """
-        強制繞過 session_state 快取，直接打 TDX token endpoint，
-        回傳完整的 HTTP status / response body / error，供 sidebar 顯示。
+        強制打 TDX token endpoint，但回傳結果不再包含任何敏感資訊。
         """
         cid  = st.secrets.get("TDX_CLIENT_ID", "")
         csec = st.secrets.get("TDX_CLIENT_SECRET", "")
 
         if not cid or not csec:
-            return {
-                "ok": False,
-                "http_status": None,
-                "body": None,
-                "error": "Secrets 中找不到 TDX_CLIENT_ID 或 TDX_CLIENT_SECRET",
-            }
+            return {"ok": False, "error": "尚未設定 TDX 金鑰"}
 
         try:
             r = requests.post(
@@ -191,40 +179,12 @@ class OmniEngine:
                 },
                 timeout=10
             )
-            try:
-                body = r.json()
-            except Exception:
-                body = r.text[:500]
-
-            if r.status_code == 200 and isinstance(body, dict) and "access_token" in body:
-                # 順便更新快取
-                now = time.time()
-                st.session_state.tdx_token     = body["access_token"]
-                st.session_state.tdx_token_exp = now + body.get("expires_in", 86400)
-                st.session_state.tdx_last_error = ""
-                return {
-                    "ok": True,
-                    "http_status": r.status_code,
-                    "body": {k: v for k, v in body.items() if k != "access_token"},
-                    "error": None,
-                }
+            if r.status_code == 200 and "access_token" in r.json():
+                return {"ok": True, "error": None}
             else:
-                err = f"HTTP {r.status_code} — {body}"
-                st.session_state.tdx_last_error = str(err)
-                return {
-                    "ok": False,
-                    "http_status": r.status_code,
-                    "body": body,
-                    "error": str(err),
-                }
-        except requests.exceptions.Timeout:
-            err = "Timeout — 無法連到 TDX（請確認部署環境可對外連線）"
-            st.session_state.tdx_last_error = err
-            return {"ok": False, "http_status": None, "body": None, "error": err}
+                return {"ok": False, "error": f"連線失敗 (HTTP {r.status_code})"}
         except Exception as e:
-            err = str(e)
-            st.session_state.tdx_last_error = err
-            return {"ok": False, "http_status": None, "body": None, "error": err}
+            return {"ok": False, "error": "網路連線異常或逾時"}
 
     # ──────────────────────────────────────────────────
     # ✅ TDX OAuth2（修復：改用獨立 requests，完整記錄錯誤）
@@ -244,8 +204,6 @@ class OmniEngine:
             return None
 
         try:
-            # ✅ 必須用獨立 requests.post，不能帶自訂 User-Agent Session
-            #    content-type 必須是 application/x-www-form-urlencoded（官方規範）
             r = requests.post(
                 "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
                 headers={"content-type": "application/x-www-form-urlencoded"},
@@ -257,7 +215,7 @@ class OmniEngine:
                 timeout=10
             )
             if r.status_code == 401:
-                err = f"401 Unauthorized — Client ID 或 Secret 錯誤（請至 TDX 會員中心確認金鑰）"
+                err = f"401 Unauthorized — Client ID 或 Secret 錯誤"
                 st.session_state.tdx_last_error = err
                 st.session_state.tdx_token = None
                 return None
@@ -265,17 +223,15 @@ class OmniEngine:
             j = r.json()
             st.session_state.tdx_token     = j["access_token"]
             st.session_state.tdx_token_exp = now + j.get("expires_in", 86400)
-            st.session_state.tdx_last_error = ""   # 清除舊錯誤
+            st.session_state.tdx_last_error = ""   
             return st.session_state.tdx_token
         except requests.exceptions.Timeout:
-            err = "逾時 (Timeout) — 無法連到 TDX，請確認部署環境可對外連線"
-            print(f"[TDX] Auth Error: {err}")
+            err = "逾時 (Timeout) — 無法連線"
             st.session_state.tdx_last_error = err
             st.session_state.tdx_token = None
             return None
         except Exception as e:
             err = str(e)
-            print(f"[TDX] Auth Error: {err}")
             st.session_state.tdx_last_error = err
             st.session_state.tdx_token = None
             return None
@@ -292,32 +248,26 @@ class OmniEngine:
         if not token:
             print(f"[TDX] No token available, skip: {url}")
             return None
-
         try:
-            r = self.http.get(url, headers=_build_headers(token),
-                              params=params, timeout=timeout)
-
-            # ✅ 401 → 強制清除快取 token 並重取一次
+            r = self.http.get(url, headers=_build_headers(token), params=params, timeout=timeout)
             if r.status_code == 401:
-                print("[TDX] 401 received, refreshing token...")
-                st.session_state.tdx_token     = None
+                st.session_state.tdx_token = None
                 st.session_state.tdx_token_exp = 0
                 token = self._get_tdx_token()
-                if not token:
-                    return None
-                r = self.http.get(url, headers=_build_headers(token),
-                                  params=params, timeout=timeout)
-
+                if not token: return None
+                r = self.http.get(url, headers=_build_headers(token), params=params, timeout=timeout)
             if r.status_code == 429:
-                print(f"[TDX] 429 Rate limit on {url}")
-                time.sleep(1)  # ✅ 修復：429 後稍作等待，避免後續呼叫繼續觸發限流
+                time.sleep(1)
                 return None
-
             r.raise_for_status()
             return r.json()
         except Exception as e:
             print(f"[TDX] GET Error ({url}): {e}")
             return None
+
+    # ──────────────────────────────────────────────────
+    # [下方其餘所有 API 與抓取邏輯保留您原本寫法，完全不動]
+    # ──────────────────────────────────────────────────
 
     # ──────────────────────────────────────────────────
     # 環境 API

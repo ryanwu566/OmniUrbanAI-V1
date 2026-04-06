@@ -159,96 +159,37 @@ pk         = st.session_state.parking_data
 bk         = st.session_state.bike_data
 
 # ══════════════════════════════════════════════
-# 🔧 Sidebar：TDX API 診斷面板 + 歷史紀錄
+# 🔧 Sidebar：系統狀態
 # ══════════════════════════════════════════════
 with st.sidebar:
-    st.markdown("### 🔧 TDX API 診斷")
+    st.markdown("### 📊 系統連線狀態")
     diag = engine.tdx_diagnose()
 
-    if diag["cid_set"]:
-        st.success(f"✅ TDX_CLIENT_ID：`{diag['cid_preview']}`")
-    else:
-        st.error("❌ TDX_CLIENT_ID **未設定**")
-        st.code('[secrets]\nTDX_CLIENT_ID = "你的ID"\nTDX_CLIENT_SECRET = "你的Secret"', language="toml")
-
-    if diag["csec_set"]:
-        st.success("✅ TDX_CLIENT_SECRET：已設定")
-    else:
-        st.error("❌ TDX_CLIENT_SECRET **未設定**")
-
-    if diag["token_ok"]:
-        st.success(f"✅ Token 取得成功：`{diag['token_preview']}`")
-    else:
-        st.error("❌ Token 取得失敗（點下方按鈕查看原始錯誤）")
-
-    if diag["last_error"]:
-        st.markdown("**上次錯誤：**")
-        st.code(diag["last_error"], language="text")
-        err = diag["last_error"]
-        if "401" in err or "Unauthorized" in err:
-            st.warning("💡 Client ID 或 Secret 錯誤，請至 TDX 會員中心確認金鑰")
-        elif "找不到" in err:
-            st.warning("💡 請確認 Secrets 中有 TDX_CLIENT_ID 和 TDX_CLIENT_SECRET")
-        elif "逾時" in err or "Timeout" in err:
-            st.warning("💡 網路無法連到 TDX，請確認部署環境可對外連線")
-
-    # ── 立即測試按鈕（強制繞過快取，秀出原始 HTTP 回應）──
-    if st.button("🧪 立即測試 Token（顯示完整回應）"):
-        st.session_state.tdx_token     = None
-        st.session_state.tdx_token_exp = 0
-        with st.spinner("正在連線 TDX..."):
-            result = engine.tdx_test_token()
-        if result["ok"]:
-            st.success("✅ Token 取得成功！")
-            st.caption(f"HTTP 狀態碼：{result['http_status']}")
-            st.json(result["body"])
+    if diag["cid_set"] and diag["csec_set"]:
+        if diag["token_ok"]:
+            st.success("🟢 TDX API：連線正常")
         else:
-            st.error(f"❌ 失敗 — HTTP {result['http_status']}")
-            st.markdown("**完整回應 body：**")
-            st.code(str(result["body"]), language="text")
-            st.markdown("**錯誤訊息：**")
-            st.code(str(result["error"]), language="text")
-            body_str = str(result.get("body", ""))
-            if "invalid_client" in body_str:
-                st.warning("💡 **invalid_client** — Client ID 或 Secret 打錯了，請複製貼上，不要手打")
-            elif "unauthorized_client" in body_str:
-                st.warning("💡 **unauthorized_client** — 帳號尚未通過審核，或金鑰已被停用")
-            elif "account_disabled" in body_str or "disabled" in body_str:
-                st.warning("💡 帳號已被停用，請至 TDX 會員中心確認")
+            st.error("🔴 TDX API：連線失敗")
+            if diag["last_error"]:
+                with st.expander("查看錯誤提示"):
+                    st.caption(diag["last_error"])
+    else:
+        st.warning("🟡 TDX API：未設定金鑰")
+        st.caption("請確認 Secrets 中已填寫 TDX 資訊。")
 
-    if st.button("🔄 重置 Token 快取"):
+    if st.button("🔄 重新連線 TDX"):
         st.session_state.tdx_token     = None
         st.session_state.tdx_token_exp = 0
         st.session_state["tdx_last_error"] = ""
+        with st.spinner("正在重新連線..."):
+            res = engine.tdx_test_token()
+            if res["ok"]:
+                st.toast("✅ 連線成功！", icon="🎉")
+            else:
+                st.toast(f"❌ {res['error']}", icon="🚨")
         st.rerun()
 
     st.divider()
-    st.markdown("**🔍 Streamlit 實際讀到的 Secrets**")
-    try:
-        all_keys = list(st.secrets.keys())
-        st.caption(f"所有 key：`{all_keys}`")
-        cid_raw  = st.secrets.get("TDX_CLIENT_ID",    "")
-        csec_raw = st.secrets.get("TDX_CLIENT_SECRET", "")
-        st.code(
-            f'TDX_CLIENT_ID     = "{cid_raw[:10]}…" (len={len(cid_raw)})\n'
-            f'TDX_CLIENT_SECRET = "{csec_raw[:8]}…"  (len={len(csec_raw)})',
-            language="text"
-        )
-    except Exception as ex:
-        st.error(f"讀取 secrets 失敗：{ex}")
-
-    st.divider()
-    st.markdown("**secrets.toml 範本**")
-    st.code(
-        'GOOGLE_MAPS_API_KEY = "AIza..."\n'
-        'TDX_CLIENT_ID       = "你的ClientId"\n'
-        'TDX_CLIENT_SECRET   = "你的ClientSecret"',
-        language="toml"
-    )
-
-    # ── 座標 & TDX API 直接測試 ──
-    st.divider()
-    st.markdown("### 🗺️ 目前分析座標")
     _d = st.session_state.report_data
     _lat = _d.get("lat", 25.0330)
     _lon = _d.get("lon", 121.5654)
