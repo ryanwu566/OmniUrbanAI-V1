@@ -179,20 +179,44 @@ with st.sidebar:
     if diag["token_ok"]:
         st.success(f"✅ Token 取得成功：`{diag['token_preview']}`")
     else:
-        st.error("❌ Token 取得失敗")
+        st.error("❌ Token 取得失敗（點下方按鈕查看原始錯誤）")
 
     if diag["last_error"]:
-        st.markdown("**錯誤詳情：**")
+        st.markdown("**上次錯誤：**")
         st.code(diag["last_error"], language="text")
         err = diag["last_error"]
         if "401" in err or "Unauthorized" in err:
             st.warning("💡 Client ID 或 Secret 錯誤，請至 TDX 會員中心確認金鑰")
         elif "找不到" in err:
-            st.warning("💡 請在 Streamlit Cloud → Settings → Secrets 加入 TDX_CLIENT_ID 和 TDX_CLIENT_SECRET")
+            st.warning("💡 請確認 Secrets 中有 TDX_CLIENT_ID 和 TDX_CLIENT_SECRET")
         elif "逾時" in err or "Timeout" in err:
             st.warning("💡 網路無法連到 TDX，請確認部署環境可對外連線")
 
-    if st.button("🔄 重置 Token 快取並重試"):
+    # ── 立即測試按鈕（強制繞過快取，秀出原始 HTTP 回應）──
+    if st.button("🧪 立即測試 Token（顯示完整回應）"):
+        st.session_state.tdx_token     = None
+        st.session_state.tdx_token_exp = 0
+        with st.spinner("正在連線 TDX..."):
+            result = engine.tdx_test_token()
+        if result["ok"]:
+            st.success("✅ Token 取得成功！")
+            st.caption(f"HTTP 狀態碼：{result['http_status']}")
+            st.json(result["body"])
+        else:
+            st.error(f"❌ 失敗 — HTTP {result['http_status']}")
+            st.markdown("**完整回應 body：**")
+            st.code(str(result["body"]), language="text")
+            st.markdown("**錯誤訊息：**")
+            st.code(str(result["error"]), language="text")
+            body_str = str(result.get("body", ""))
+            if "invalid_client" in body_str:
+                st.warning("💡 **invalid_client** — Client ID 或 Secret 打錯了，請複製貼上，不要手打")
+            elif "unauthorized_client" in body_str:
+                st.warning("💡 **unauthorized_client** — 帳號尚未通過審核，或金鑰已被停用")
+            elif "account_disabled" in body_str or "disabled" in body_str:
+                st.warning("💡 帳號已被停用，請至 TDX 會員中心確認")
+
+    if st.button("🔄 重置 Token 快取"):
         st.session_state.tdx_token     = None
         st.session_state.tdx_token_exp = 0
         st.session_state["tdx_last_error"] = ""
