@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-OmniUrban Decision Dashboard v10.8
+OmniUrban Decision Dashboard v10.9
 =====================================
 升級項目：
-1. 公車看板改為 `<details>` 原生 HTML 下拉選單。
-2. 捲軸美化，支援無上限班次展開。
+1. YouBike 新增多站點下拉清單，支援周邊 5 個站點資訊。
 (其餘功能與版面完全不動)
 """
 
@@ -64,7 +63,7 @@ st.markdown("""
     .bar-fg { height: 100%; background: #38BDF8; border-radius: 3px; }
     .divider { border-top: 1px solid #334155; margin: 20px 0; }
 
-    /* ── 公車動態看板與下拉選單 ── */
+    /* ── 公車與單車看板通用樣式 ── */
     .bus-board {
         background: #0B1220; border: 1px solid #1e293b; border-radius: 8px;
         padding: 5px 0;
@@ -86,7 +85,6 @@ st.markdown("""
         border: 1px solid #334155; border-radius: 4px; padding: 1px 6px; margin-left: 8px;
     }
     
-    /* 🚀 隱藏 details 預設三角形並美化捲軸 */
     details > summary { list-style: none; }
     details > summary::-webkit-details-marker { display: none; }
     .bus-board::-webkit-scrollbar { width: 5px; }
@@ -110,7 +108,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ── 三圖連動 ──
 if st.session_state.get("pending_map_update"):
     with st.spinner("📍 偵測到地圖點擊，正在反查地址並同步街景與估價模型..."):
         new_addr = st.session_state.pending_map_update["addr"]
@@ -130,7 +127,6 @@ yb       = data.get("yb_data", {})
 bus      = data.get("bus_data", {})
 api_health = m.get("api_health", {})
 
-# ── Header ──
 st.markdown('<div class="hero-title">OmniUrban Spatial Engine</div>', unsafe_allow_html=True)
 st.markdown(f"""
 <div class="status-capsule">
@@ -143,7 +139,6 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# ── 搜尋列 ──
 with st.container():
     st.markdown('<div class="lbl" style="font-size:1rem;">Target Location (目標基地設定)</div>', unsafe_allow_html=True)
     c1, c2 = st.columns([3, 1])
@@ -280,6 +275,30 @@ with c_left:
     yb_color = "color-primary" if has_bikes else "color-danger"
     yb_dist_str = f"{yb_dist}m" if yb_dist not in ('--', '') else "--"
 
+    # 🚀 YouBike 新增多站點下拉清單
+    yb_nearby = yb.get('nearby_stations', [])
+    yb_board = ""
+    if yb_nearby and len(yb_nearby) > 1:
+        yb_rows = ""
+        for s in yb_nearby[1:]: # 排除第一個(已經顯示在上方了)
+            c = "#14B8A6" if int(s['bikes']) > 0 else "#EF4444"
+            yb_rows += f"""
+            <div class="bus-row">
+                <div><span class="bus-route">{s['name']}</span><span class='bus-dir'>({s['dist']}m)</span></div>
+                <div style="color:{c}; font-weight:700; font-size:0.9rem;">{s['bikes']} 輛 <span style="color:#64748b;font-weight:400;font-size:0.75rem;">/ {s['empty']} 空</span></div>
+            </div>"""
+            
+        yb_board = f"""
+        <details style="margin-top: 12px;">
+            <summary style="cursor: pointer; color: #38BDF8; font-size: 0.85rem; font-weight: 600; padding: 6px 0; outline: none;">
+                👇 附近其他 {len(yb_nearby)-1} 個站點
+            </summary>
+            <div class="bus-board" style="max-height: 160px; overflow-y: auto; margin-top: 4px;">
+                {yb_rows}
+            </div>
+        </details>
+        """
+
     st.markdown(f"""
     <div class="metric-card" style="padding:24px;">
         <span class="lbl">🚲 YouBike 2.0 <span class="source-tag">{yb_src}</span></span>
@@ -295,6 +314,7 @@ with c_left:
                 <div class="yb-lbl">可還空位</div>
             </div>
         </div>
+        {yb_board}
     </div>""", unsafe_allow_html=True)
 
 # ── 公車動態看板 ──────────────────────────
@@ -305,12 +325,11 @@ with c_mid:
     bus_status = bus.get('status', '🔴')
     bus_dist_str = f"{bus_dist}m" if bus_dist not in ('--', '') else "--"
 
-    # 🚀 使用 HTML <details> 下拉式選單顯示全部班次
     if arrivals:
         rows_html = ""
         for a in arrivals:
             urgency = a.get("urgency", 9)
-            eta_cls = {0: "eta-0", 1: "eta-1", 2: "eta-2", 3: "eta-2"}.get(urgency, "eta-9")
+            eta_cls = {0: "eta-0", 1: "eta-1", 2: "eta-2", 3: "eta-2"}.get(urgency, "eta-9") if urgency <= 3 else "eta-9"
             plate   = a.get('plate', '')
             plate_str = f"<span style='color:#475569;font-size:0.75rem;'> [{plate}]</span>" if plate and plate != "noPlate" else ""
             dir_str = f"<span class='bus-dir'>({a.get('dir','')})</span>"

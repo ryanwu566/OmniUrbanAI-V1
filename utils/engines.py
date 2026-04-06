@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-OmniUrban Intelligence Engine v10.7 (TDX 終極修復版)
+OmniUrban Intelligence Engine v10.9 (TDX 終極修復版)
 ===================================================
 1. TDX 核心升級：精準對齊官方 Sample Code，加入 gzip 與 form-urlencoded 規範。
 2. 雙北不漏接演算法：棄用不穩定的 NearBy ETA，改採 City API + 空間過濾，保證 100% 抓到公車。
 3. 軌道運輸滿配：自動將附近 1.5km 內的捷運/火車站置頂於公車看板。
-4. 解除公車筆數限制，全路線抓取。
-5. 地圖提示框更名為「800m 分析範圍」。
+4. 解除公車筆數限制，全路線抓取，並修復「精確分鐘數排序」問題。
+5. YouBike 新增多站點支援：回傳附近 6 個站點的資料，支援前端下拉選單。
 """
 
 import streamlit as st
@@ -36,7 +36,6 @@ CITY_CODES = {
 NAME_TO_CODE = {v: k for k, v in CITY_CODES.items()}
 NAME_TO_CODE.update({"臺北市": "A", "臺中市": "B", "臺南市": "D", "臺東縣": "T"})
 
-# TDX 縣市對應表 (City API 專用)
 TDX_CITY_MAP = {
     "台北市": "Taipei", "臺北市": "Taipei", "新北市": "NewTaipei",
     "桃園市": "Taoyuan", "台中市": "Taichung", "臺中市": "Taichung",
@@ -81,7 +80,7 @@ class OmniEngine:
                 "city": "", "lat": 25.0330, "lon": 121.5654,
                 "poi_scores": [0]*6, "poi_names": [[]]*6, "raw_pois": [],
                 "moltke_data": {}, "env_data": {"aqi": "--", "status": "--"},
-                "yb_data": {"status": "待機", "station": "--", "dist": "--", "bikes": "--", "empty_slots": "--", "source": ""},
+                "yb_data": {"status": "待機", "station": "--", "dist": "--", "bikes": "--", "empty_slots": "--", "source": "", "nearby_stations": []},
                 "bus_data": {"status": "待機", "station": "--", "dist": "--", "arrivals": [], "source": ""},
                 "weather_data": {"status": "待機", "temp": "--", "humidity": "--"},
                 "google_key": "", "sv_heading": 0
@@ -90,9 +89,6 @@ class OmniEngine:
         if "tdx_token" not in st.session_state: st.session_state.tdx_token = None
         if "tdx_token_exp" not in st.session_state: st.session_state.tdx_token_exp = 0
 
-    # ──────────────────────────────────────────────────
-    # 基礎工具
-    # ──────────────────────────────────────────────────
     def get_roads_list(self, city, dist):
         if city == "--" or dist == "--": return []
         return TAIWAN_ROADS.get(f"{city}_{dist}", ["--查無路段，請手動輸入--"])
@@ -127,9 +123,6 @@ class OmniEngine:
         except: pass
         return None
 
-    # ──────────────────────────────────────────────────
-    # ✅ TDX OAuth2 (嚴格遵守 SampleCode 規範)
-    # ──────────────────────────────────────────────────
     def _get_tdx_token(self):
         now = time.time()
         if st.session_state.tdx_token and now < st.session_state.tdx_token_exp - 60:
@@ -175,9 +168,6 @@ class OmniEngine:
             print(f"TDX GET Error ({url}):", e)
             return None
 
-    # ──────────────────────────────────────────────────
-    # 環境 API
-    # ──────────────────────────────────────────────────
     def get_weather_data(self, lat, lon):
         try:
             url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m&timezone=Asia%2FTaipei"
@@ -194,7 +184,7 @@ class OmniEngine:
         except: return {"aqi": "--", "status": "--", "api_status": "🔴"}
 
     # ──────────────────────────────────────────────────
-    # YouBike (使用 User 爬蟲邏輯)
+    # ✅ YouBike (新增多站點回傳邏輯)
     # ──────────────────────────────────────────────────
     def get_youbike_data(self, lat, lon, addr=""):
         token = self._get_tdx_token()
@@ -207,38 +197,44 @@ class OmniEngine:
                         break
                         
                 url_station = f"https://tdx.transportdata.tw/api/basic/v2/Bike/Station/City/{city_eng}" if city_eng else "https://tdx.transportdata.tw/api/basic/v2/Bike/Station/NearBy"
-                stations = self._tdx_get(url_station, params={"$spatialFilter": f"nearby({lat},{lon},1000)", "$format": "JSON", "$top": 5})
+                stations = self._tdx_get(url_station, params={"$spatialFilter": f"nearby({lat},{lon},1200)", "$format": "JSON", "$top": 15})
                 
                 if stations and isinstance(stations, list):
                     def _d(s):
                         p = s.get("StationPosition", {})
                         return self.calc_real_dist(lat, lon, p.get("PositionLat", 0), p.get("PositionLon", 0))
-                    nearest = min(stations, key=_d)
-                    pos = nearest.get("StationPosition", {})
-                    s_lat = pos.get("PositionLat", lat)
-                    s_lon = pos.get("PositionLon", lon)
-                    dist = _d(nearest)
-                    uid = nearest.get("StationUID", "")
-                    name = (nearest.get("StationName", {}).get("Zh_tw", "--").replace("YouBike2.0_", "").replace("YouBike 2.0_", ""))
-
+                    
+                    # 依距離排序
+                    stations.sort(key=_d)
+                    
                     url_avail = f"https://tdx.transportdata.tw/api/basic/v2/Bike/Availability/City/{city_eng}" if city_eng else "https://tdx.transportdata.tw/api/basic/v2/Bike/Availability/NearBy"
-                    avails = self._tdx_get(url_avail, params={"$spatialFilter": f"nearby({s_lat},{s_lon},100)", "$format": "JSON", "$top": 5}) or []
+                    avails = self._tdx_get(url_avail, params={"$spatialFilter": f"nearby({lat},{lon},1200)", "$format": "JSON"}) or []
+                    avail_map = {a.get("StationUID"): a for a in avails}
 
-                    bikes, empty = "0", "0"
-                    for a in avails:
-                        if a.get("StationUID") == uid or not bikes or bikes == "0":
-                            bikes = str(a.get("AvailableRentBikes", 0))
-                            empty = str(a.get("AvailableReturnBikes", 0))
-                        if a.get("StationUID") == uid: break
+                    nearby = []
+                    for s in stations[:6]: # 抓最近 6 站 (1站置頂 + 5站下拉)
+                        uid = s.get("StationUID", "")
+                        name = (s.get("StationName", {}).get("Zh_tw", "--").replace("YouBike2.0_", "").replace("YouBike 2.0_", ""))
+                        d = _d(s)
+                        a = avail_map.get(uid, {})
+                        bikes = str(a.get("AvailableRentBikes", 0)) if a else "0"
+                        empty = str(a.get("AvailableReturnBikes", 0)) if a else "0"
+                        nearby.append({"name": name, "dist": d, "bikes": bikes, "empty": empty})
 
-                    return {"status": "🟢", "station": name, "dist": dist, "bikes": bikes, "empty_slots": empty, "source": "TDX 全台"}
+                    if nearby:
+                        closest = nearby[0]
+                        return {
+                            "status": "🟢", "station": closest['name'], "dist": closest['dist'], 
+                            "bikes": closest['bikes'], "empty_slots": closest['empty'], "source": "TDX 全台", 
+                            "nearby_stations": nearby
+                        }
             except Exception as e:
                 pass
 
-        return {"status": "🔴", "station": "連線失敗或無資料", "dist": "--", "bikes": "0", "empty_slots": "--", "source": "API 異常"}
+        return {"status": "🔴", "station": "連線失敗或無資料", "dist": "--", "bikes": "0", "empty_slots": "--", "source": "API 異常", "nearby_stations": []}
 
     # ──────────────────────────────────────────────────
-    # ✅ 全滿配 TDX 公車與軌道動態 (解除數量限制)
+    # ✅ TDX 公車 (修復分鐘數精確排序)
     # ──────────────────────────────────────────────────
     def get_bus_data(self, lat, lon, addr=""):
         token = self._get_tdx_token()
@@ -297,17 +293,17 @@ class OmniEngine:
                 direction = e.get("Direction", 0)
                 plate = e.get("PlateNumb", "")
                 
+                # 🚀 這裡將 urgency 直接設為真正的「分鐘數」，解決排序錯亂的問題
                 if status == 0 and est is not None:
                     mins = int(est) // 60
                     if mins == 0: label, urgency = "進站中 🚌", 0
-                    elif mins <= 3: label, urgency = f"{mins} 分鐘 ⚡", 1
-                    elif mins <= 10: label, urgency = f"{mins} 分鐘", 2
-                    else: label, urgency = f"{mins} 分鐘", 3
-                elif status == 1: label, urgency = "尚未發車", 9
-                elif status == 2: label, urgency = "交管不停", 9
-                elif status == 3: label, urgency = "末班已過", 9
-                elif status == 4: label, urgency = "今日未營運", 9
-                else: label, urgency = "無資料", 9
+                    elif mins <= 3: label, urgency = f"{mins} 分鐘 ⚡", mins
+                    else: label, urgency = f"{mins} 分鐘", mins
+                elif status == 1: label, urgency = "尚未發車", 9991
+                elif status == 2: label, urgency = "交管不停", 9992
+                elif status == 3: label, urgency = "末班已過", 9993
+                elif status == 4: label, urgency = "今日未營運", 9994
+                else: label, urgency = "無資料", 9999
                 
                 key = f"{rname}_{direction}"
                 if key not in route_map or urgency < route_map[key]["urgency"]:
@@ -317,7 +313,6 @@ class OmniEngine:
                         "route": rname
                     }
             
-            # 🚀 解除限制：不使用 [:8]，全數路線回傳
             arrivals = sorted(list(route_map.values()), key=lambda x: x["urgency"])
 
             try:
@@ -325,13 +320,13 @@ class OmniEngine:
                 if tra:
                     closest_tra = min(tra, key=lambda x: self.calc_real_dist(lat, lon, x.get("StationPosition",{}).get("PositionLat",0), x.get("StationPosition",{}).get("PositionLon",0)))
                     tra_dist = self.calc_real_dist(lat, lon, closest_tra.get("StationPosition",{}).get("PositionLat",0), closest_tra.get("StationPosition",{}).get("PositionLon",0))
-                    arrivals.insert(0, {"route": f"🚆 台鐵{closest_tra.get('StationName', {}).get('Zh_tw', '')}站", "dir": f"{tra_dist}m", "label": "軌道運輸", "urgency": 0, "plate": ""})
+                    arrivals.insert(0, {"route": f"🚆 台鐵{closest_tra.get('StationName', {}).get('Zh_tw', '')}站", "dir": f"{tra_dist}m", "label": "軌道運輸", "urgency": -2, "plate": ""})
                 else:
                     mrt = self._tdx_get("https://tdx.transportdata.tw/api/basic/v2/Rail/Metro/Station/NearBy", params={"$spatialFilter": f"nearby({lat},{lon},1500)", "$format": "JSON"})
                     if mrt:
                         closest_mrt = min(mrt, key=lambda x: self.calc_real_dist(lat, lon, x.get("StationPosition",{}).get("PositionLat",0), x.get("StationPosition",{}).get("PositionLon",0)))
                         mrt_dist = self.calc_real_dist(lat, lon, closest_mrt.get("StationPosition",{}).get("PositionLat",0), closest_mrt.get("StationPosition",{}).get("PositionLon",0))
-                        arrivals.insert(0, {"route": f"🚇 捷運{closest_mrt.get('StationName', {}).get('Zh_tw', '')}站", "dir": f"{mrt_dist}m", "label": "捷運路網", "urgency": 0, "plate": ""})
+                        arrivals.insert(0, {"route": f"🚇 捷運{closest_mrt.get('StationName', {}).get('Zh_tw', '')}站", "dir": f"{mrt_dist}m", "label": "捷運路網", "urgency": -1, "plate": ""})
             except: pass
 
             if not arrivals:
@@ -358,9 +353,6 @@ class OmniEngine:
         except: pass
         return {"status": "🔴", "station": "附近無站點", "dist": "--", "arrivals": [], "source": ""}
 
-    # ──────────────────────────────────────────────────
-    # POI 機能評分
-    # ──────────────────────────────────────────────────
     def get_real_poi_scores(self, lat, lon, addr):
         google_key = st.secrets.get("GOOGLE_MAPS_API_KEY", "")
         counts = [0]*6; raw_names = [[] for _ in range(6)]; raw_pois = []
@@ -403,9 +395,6 @@ class OmniEngine:
             except: pass
         return [0]*6, [0]*6, [[] for _ in range(6)], [], "🔴"
 
-    # ──────────────────────────────────────────────────
-    # 估價
-    # ──────────────────────────────────────────────────
     def get_real_base_price(self, city_name, dist_name, road_name):
         records = fetch_city_data(city_name, trade_type="A")
         if not records: return None, ""
@@ -455,9 +444,6 @@ class OmniEngine:
         variance = 0.06 + (random.random() * 0.04)
         return (f"{int(final_price*(1-variance))} ~ {int(final_price*(1+variance))}", source_tag, final_price)
 
-    # ──────────────────────────────────────────────────
-    # 街景 Heading
-    # ──────────────────────────────────────────────────
     def _get_street_heading(self, lat, lon, google_key):
         if not google_key: return 0
         try:
@@ -472,9 +458,6 @@ class OmniEngine:
         except: pass
         return 0
 
-    # ──────────────────────────────────────────────────
-    # 主流程
-    # ──────────────────────────────────────────────────
     def get_dynamic_data(self, addr, floor):
         lat, lon = 25.0330, 121.5654
         google_key = st.secrets.get("GOOGLE_MAPS_API_KEY", "")
@@ -543,7 +526,6 @@ class OmniEngine:
         offset = 0.0072
         bounds = [[lat-offset, lon-offset], [lat+offset, lon+offset]]
         for mm in [m.m1, m.m2]:
-            # 🚀 已將 tooltip 從「戰術掃描區」改為「分析範圍」
             folium.Rectangle(bounds, color='#38BDF8', fill=True, fill_opacity=0.05, weight=2, dash_array='5, 5', tooltip="800m 分析範圍").add_to(mm)
             folium.Marker([lat, lon], icon=folium.Icon(color="red", icon="home")).add_to(mm)
             
