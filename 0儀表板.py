@@ -202,58 +202,99 @@ with st.sidebar:
         st.warning("⚠️ 座標是預設值 — 地址未成功 Geocode，請確認 GOOGLE_MAPS_API_KEY 已設定")
 
     st.markdown("### 🔬 TDX API 直接測試")
+    st.caption("⚠️ 過於頻繁會觸發限流 (429)。每次測試間隔建議 5 秒以上。")
+    
+    # 初始化測試冷卻時間
+    if "last_tdx_test_time" not in st.session_state:
+        st.session_state.last_tdx_test_time = 0
+    
     _test_lat = st.number_input("測試緯度", value=float(_lat), format="%.6f", key="test_lat")
     _test_lon = st.number_input("測試經度", value=float(_lon), format="%.6f", key="test_lon")
+    
+    # 防頻繁點擊檢查函數
+    def _check_rate_limit(min_interval=5):
+        import time as _time_module
+        _now = _time_module.time()
+        _elapsed = _now - st.session_state.last_tdx_test_time
+        if _elapsed < min_interval:
+            st.warning(f"⏳ 請稍候 {min_interval - int(_elapsed)} 秒後再測試（防止 API 限流）")
+            return False
+        st.session_state.last_tdx_test_time = _now
+        return True
+    
     if st.button("🚲 測試 YouBike NearBy"):
+        if not _check_rate_limit(5):
+            st.stop()
+        
         import requests as _req
         _tok = engine._get_tdx_token()
         if _tok:
-            _r = _req.get(
-                "https://tdx.transportdata.tw/api/basic/v2/Bike/Station/NearBy",
-                headers={"Authorization": f"Bearer {_tok}", "Accept": "application/json"},
-                params={"$spatialFilter": f"nearby({_test_lat},{_test_lon},1200)",
-                        "$format": "JSON", "$top": 5,
-                        "$select": "StationUID,StationName,StationPosition"},
-                timeout=10
-            )
-            st.code(f"HTTP {_r.status_code}", language="text")
             try:
-                _j = _r.json()
-                if isinstance(_j, list):
-                    st.success(f"✅ 找到 {len(_j)} 個站點")
-                    for _s in _j[:3]:
-                        _n = _s.get("StationName", {}).get("Zh_tw", "?")
-                        _p = _s.get("StationPosition", {})
-                        st.caption(f"• {_n} ({_p.get('PositionLat')}, {_p.get('PositionLon')})")
+                _r = _req.get(
+                    "https://tdx.transportdata.tw/api/basic/v2/Bike/Station/NearBy",
+                    headers={"Authorization": f"Bearer {_tok}", "Accept": "application/json"},
+                    params={"$spatialFilter": f"nearby({_test_lat},{_test_lon},1200)",
+                            "$format": "JSON", "$top": 5,
+                            "$select": "StationUID,StationName,StationPosition"},
+                    timeout=10
+                )
+                
+                if _r.status_code == 429:
+                    st.error("❌ HTTP 429 — API 限流中。請等待 30 秒後重試。")
+                    st.code("響應：API rate limit exceeded", language="text")
                 else:
-                    st.json(_j)
+                    st.code(f"HTTP {_r.status_code} ✓", language="text")
+                    try:
+                        _j = _r.json()
+                        if isinstance(_j, list):
+                            st.success(f"✅ 找到 {len(_j)} 個站點")
+                            for _s in _j[:3]:
+                                _n = _s.get("StationName", {}).get("Zh_tw", "?")
+                                _p = _s.get("StationPosition", {})
+                                st.caption(f"• {_n} ({_p.get('PositionLat'):.4f}, {_p.get('PositionLon'):.4f})")
+                        else:
+                            st.json(_j)
+                    except Exception as _e:
+                        st.code(_r.text[:400])
             except Exception as _e:
-                st.code(_r.text[:400])
+                st.error(f"❌ 請求失敗：{str(_e)}")
         else:
             st.error("Token 無效")
+    
     if st.button("🚌 測試公車 Stop NearBy"):
+        if not _check_rate_limit(5):
+            st.stop()
+        
         import requests as _req
         _tok = engine._get_tdx_token()
         if _tok:
-            _r = _req.get(
-                "https://tdx.transportdata.tw/api/basic/v2/Bus/Stop/NearBy",
-                headers={"Authorization": f"Bearer {_tok}", "Accept": "application/json"},
-                params={"$spatialFilter": f"nearby({_test_lat},{_test_lon},800)",
-                        "$format": "JSON", "$top": 5,
-                        "$select": "StopUID,StopName,StopPosition"},
-                timeout=10
-            )
-            st.code(f"HTTP {_r.status_code}", language="text")
             try:
-                _j = _r.json()
-                if isinstance(_j, list):
-                    st.success(f"✅ 找到 {len(_j)} 個站牌")
-                    for _s in _j[:3]:
-                        st.caption(f"• {_s.get('StopName',{}).get('Zh_tw','?')}")
+                _r = _req.get(
+                    "https://tdx.transportdata.tw/api/basic/v2/Bus/Stop/NearBy",
+                    headers={"Authorization": f"Bearer {_tok}", "Accept": "application/json"},
+                    params={"$spatialFilter": f"nearby({_test_lat},{_test_lon},800)",
+                            "$format": "JSON", "$top": 5,
+                            "$select": "StopUID,StopName,StopPosition"},
+                    timeout=10
+                )
+                
+                if _r.status_code == 429:
+                    st.error("❌ HTTP 429 — API 限流中。請等待 30 秒後重試。")
+                    st.code("響應：API rate limit exceeded", language="text")
                 else:
-                    st.json(_j)
+                    st.code(f"HTTP {_r.status_code} ✓", language="text")
+                    try:
+                        _j = _r.json()
+                        if isinstance(_j, list):
+                            st.success(f"✅ 找到 {len(_j)} 個站牌")
+                            for _s in _j[:3]:
+                                st.caption(f"• {_s.get('StopName',{}).get('Zh_tw','?')}")
+                        else:
+                            st.json(_j)
+                    except Exception as _e:
+                        st.code(_r.text[:400])
             except Exception as _e:
-                st.code(_r.text[:400])
+                st.error(f"❌ 請求失敗：{str(_e)}")
         else:
             st.error("Token 無效")
 

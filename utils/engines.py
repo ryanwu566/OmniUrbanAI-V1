@@ -236,7 +236,7 @@ class OmniEngine:
             st.session_state.tdx_token = None
             return None
 
-    def _tdx_get(self, url, params=None, timeout=10):
+    def _tdx_get(self, url, params=None, timeout=10, retry_on_429=True):
         def _build_headers(tok):
             return {
                 "Authorization":   f"Bearer {tok}",
@@ -248,22 +248,39 @@ class OmniEngine:
         if not token:
             print(f"[TDX] No token available, skip: {url}")
             return None
-        try:
-            r = self.http.get(url, headers=_build_headers(token), params=params, timeout=timeout)
-            if r.status_code == 401:
-                st.session_state.tdx_token = None
-                st.session_state.tdx_token_exp = 0
-                token = self._get_tdx_token()
-                if not token: return None
+        
+        retry_count = 0
+        max_retries = 2
+        
+        while retry_count <= max_retries:
+            try:
                 r = self.http.get(url, headers=_build_headers(token), params=params, timeout=timeout)
-            if r.status_code == 429:
-                time.sleep(1)
+                if r.status_code == 401:
+                    st.session_state.tdx_token = None
+                    st.session_state.tdx_token_exp = 0
+                    token = self._get_tdx_token()
+                    if not token: return None
+                    r = self.http.get(url, headers=_build_headers(token), params=params, timeout=timeout)
+                
+                if r.status_code == 429:
+                    if retry_on_429 and retry_count < max_retries:
+                        wait_time = 2 ** (retry_count + 1)  # 指數退避：2秒、4秒
+                        print(f"[TDX] Rate limit 429 — 等待 {wait_time}秒後重試...")
+                        time.sleep(wait_time)
+                        retry_count += 1
+                        continue
+                    else:
+                        print(f"[TDX] Rate limit 429 — 達到重試上限，放棄此請求")
+                        st.session_state.tdx_last_error = "API 限流 (429) — 請稍候再試"
+                        return None
+                
+                r.raise_for_status()
+                return r.json()
+            except Exception as e:
+                print(f"[TDX] GET Error ({url}): {e}")
                 return None
-            r.raise_for_status()
-            return r.json()
-        except Exception as e:
-            print(f"[TDX] GET Error ({url}): {e}")
-            return None
+        
+        return None
 
     # ──────────────────────────────────────────────────
     # [下方其餘所有 API 與抓取邏輯保留您原本寫法，完全不動]
