@@ -132,6 +132,8 @@ if "parking_data" not in st.session_state:
     st.session_state.parking_data = {"status": "待機", "lots": [], "source": ""}
 if "bike_data" not in st.session_state:
     st.session_state.bike_data = {"status": "待機", "count": 0, "nearest": "--", "source": ""}
+if "train_data" not in st.session_state:
+    st.session_state.train_data = {"status": "待機", "message": "", "delays": [], "source": ""}
 
 if st.session_state.get("pending_map_update"):
     with st.spinner("📍 偵測到地圖點擊，正在反查地址並同步街景與估價模型..."):
@@ -157,6 +159,7 @@ bus        = data.get("bus_data", {})
 api_health = m.get("api_health", {})
 pk         = st.session_state.parking_data
 bk         = st.session_state.bike_data
+tr         = st.session_state.train_data
 
 # ══════════════════════════════════════════════
 # 🔧 Sidebar：系統狀態
@@ -280,6 +283,8 @@ st.markdown(f"""
     <div>Weather: {w.get('temp','--')}</div>
     <div>AQI: {env.get('aqi','--')} ({env.get('api_status','--')})</div>
     <div>YouBike: {yb.get('source','--')}</div>
+    <div>公車: {bus.get('source','--')}</div>
+    <div>列車: {tr.get('source','--')}</div>
     <div>停車: {pk.get('status','--')}</div>
     <div>單車道: {bk.get('status','--')}</div>
 </div>
@@ -316,9 +321,10 @@ with st.container():
                     engine.save_to_history()
                     lat = res.get("lat", 25.0330)
                     lon = res.get("lon", 121.5654)
-                    # 新增：同步取得停車場與自行車道資料
+                    # ✅ 修復：同步取得停車場、自行車道、列車延誤資料
                     st.session_state.parking_data = engine.get_parking_data(lat, lon)
                     st.session_state.bike_data    = engine.get_bike_lanes(lat, lon)
+                    st.session_state.train_data   = engine.get_train_delay_data()
                     st.rerun()
 
 if not data.get("city"): st.stop()
@@ -501,9 +507,9 @@ with c_right:
 st.write("")
 
 # ══════════════════════════════════════════════
-# 🆕 新增資訊列：停車場 + 自行車道
+# 🆕 新增資訊列：停車場 + 自行車道 + 列車延誤
 # ══════════════════════════════════════════════
-cp1, cp2 = st.columns(2)
+cp1, cp2, cp3 = st.columns(3)
 
 with cp1:
     pk_src   = pk.get('source', '--')
@@ -564,6 +570,47 @@ with cp2:
                 <span style="color:#{'14B8A6' if bk_count > 0 else '475569'};">{bk_count} 條</span>
             </div>
         </div>
+    </div>""", unsafe_allow_html=True)
+
+with cp3:
+    tr_src    = tr.get('source', '--')
+    tr_message = tr.get('message', '載入中...')
+    tr_delays = tr.get('delays', [])
+    tr_status  = tr.get('status', '🟡')
+    tr_label   = f"偵測 {len(tr_delays)} 班延誤列車" if tr_delays else "列車準點"
+    tr_color   = "color-danger" if len(tr_delays) > 5 else "color-warning" if tr_delays else "color-success"
+
+    if tr_delays:
+        tr_rows = ""
+        for delay in tr_delays[:5]:  # 最多顯示5班延誤列車
+            train_no = delay.get('train_no', '--')
+            delay_mins = delay.get('delay_mins', 0)
+            severity = delay.get('severity', '--')
+            route = delay.get('route', '--')
+            
+            # 顏色根據延誤分級
+            if "嚴重" in severity:
+                delay_color = "#EF4444"
+            elif "中等" in severity:
+                delay_color = "#F59E0B"
+            else:
+                delay_color = "#38BDF8"
+            
+            tr_rows += f"""<div class='bus-row'>
+                <span style='color:#E5E7EB;font-weight:600;'>{train_no}</span>
+                <span style='color:{delay_color};font-weight:700;'>{delay_mins}分 {severity}</span>
+            </div>"""
+        
+        tr_detail = f"<div class='bus-board' style='margin-top:12px;'>{tr_rows}<div class='bus-row' style='border-bottom:none;color:#64748b;font-size:0.75rem;'>{tr_message}</div></div>"
+    else:
+        tr_detail = "<div class='bus-board'><div class='bus-row' style='color:#14B8A6;text-align:center;justify-content:center;font-weight:600;'>✅ 列車準點運行</div></div>"
+
+    st.markdown(f"""
+    <div class="metric-card" style="padding:24px;">
+        <span class="lbl">🚆 台鐵列車即時 <span class="source-tag">{tr_src}</span></span>
+        <div class="val-text {tr_color}" style="margin-bottom:4px;">{tr_label}</div>
+        <div class="sub">{tr_message}</div>
+        {tr_detail}
     </div>""", unsafe_allow_html=True)
 
 st.write("")
