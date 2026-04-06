@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-OmniUrban Decision Dashboard v10.9
+OmniUrban Decision Dashboard v11.0
 =====================================
-升級項目：
-1. 修復 HTML 標籤因 Markdown 縮排被誤判為程式碼區塊的 Bug。
-(其餘功能與版面完全不動)
+修復與新增項目：
+1. 【修復】新增停車場資訊卡（呼叫 engines.get_parking_data()）
+2. 【修復】新增自行車道資訊卡（呼叫 engines.get_bike_lanes()）
+3. 【修復】YouBike bikes 數值安全轉型（防止 '?' 導致 int() 崩潰）
+4. 【修復】Sidebar 新增歷史查詢紀錄，可一鍵重新載入
+5. 【修復】Status Capsule 新增停車場與自行車道狀態
+6. 【修復】分析按鈕後同步取得停車場與自行車道資料並存入 session_state
+7. 【其餘原有功能與版面完全不動】
 """
 
 import streamlit as st
@@ -76,15 +81,15 @@ st.markdown("""
     .bus-row:last-child { border-bottom: none; }
     .bus-route { font-weight: 700; color: #E5E7EB; min-width: 60px; }
     .bus-dir   { color: #64748b; font-size: 0.78rem; margin-left: 6px; }
-    .eta-0  { color: #14B8A6; font-weight: 800; }   /* 即將進站 */
-    .eta-1  { color: #38BDF8; font-weight: 700; }   /* ≤3分 */
-    .eta-2  { color: #E5E7EB; font-weight: 600; }   /* 一般 */
-    .eta-9  { color: #475569; font-weight: 400; }   /* 末班/未知 */
+    .eta-0  { color: #14B8A6; font-weight: 800; }
+    .eta-1  { color: #38BDF8; font-weight: 700; }
+    .eta-2  { color: #E5E7EB; font-weight: 600; }
+    .eta-9  { color: #475569; font-weight: 400; }
     .source-tag {
         display: inline-block; font-size: 0.72rem; color: #64748b;
         border: 1px solid #334155; border-radius: 4px; padding: 1px 6px; margin-left: 8px;
     }
-    
+
     details > summary { list-style: none; }
     details > summary::-webkit-details-marker { display: none; }
     .bus-board::-webkit-scrollbar { width: 5px; }
@@ -97,6 +102,15 @@ st.markdown("""
     .yb-num  { font-size: 2rem; font-weight: 800; }
     .yb-lbl  { font-size: 0.75rem; color: #64748b; margin-top: 2px; }
 
+    /* ── 停車場格 ── */
+    .park-row {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 7px 14px; border-bottom: 1px solid #1e293b; font-size: 0.88rem;
+    }
+    .park-row:last-child { border-bottom: none; }
+    .park-name { font-weight: 600; color: #E5E7EB; }
+    .park-avail { font-size: 1.1rem; font-weight: 800; }
+
     /* ── 評分圖例 / expander ── */
     .score-badge { border-radius: 6px; padding: 4px 10px; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.03em; }
     .badge-a { background: #0f3d2e; color: #14B8A6; border: 1px solid #14B8A6; }
@@ -105,8 +119,19 @@ st.markdown("""
     .badge-d { background: #3a1a1a; color: #EF4444; border: 1px solid #EF4444; }
     .streamlit-expanderHeader { background: #111827 !important; border: 1px solid #334155 !important; border-radius: 8px !important; color: #E5E7EB !important; margin-top: 20px !important; }
     .streamlit-expanderContent { background: #0f1a2e !important; border: 1px solid #334155 !important; border-top: none !important; border-radius: 0 0 8px 8px !important; }
+
+    /* ── 歷史紀錄按鈕 ── */
+    .hist-btn { background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+                padding: 8px 12px; margin-bottom: 6px; cursor: pointer;
+                font-size: 0.82rem; color: #94A3B8; width: 100%; text-align: left; }
     </style>
 """, unsafe_allow_html=True)
+
+# ── 初始化新增的 session_state 欄位 ──
+if "parking_data" not in st.session_state:
+    st.session_state.parking_data = {"status": "待機", "lots": [], "source": ""}
+if "bike_data" not in st.session_state:
+    st.session_state.bike_data = {"status": "待機", "count": 0, "nearest": "--", "source": ""}
 
 if st.session_state.get("pending_map_update"):
     with st.spinner("📍 偵測到地圖點擊，正在反查地址並同步街景與估價模型..."):
@@ -116,48 +141,49 @@ if st.session_state.get("pending_map_update"):
         if res:
             st.session_state.report_data = res
             engine.save_to_history()
+            lat = res.get("lat", 25.0330)
+            lon = res.get("lon", 121.5654)
+            st.session_state.parking_data = engine.get_parking_data(lat, lon)
+            st.session_state.bike_data    = engine.get_bike_lanes(lat, lon)
     st.session_state.pending_map_update = None
     st.rerun()
 
-data     = st.session_state.report_data
-m        = data.get("moltke_data", {})
-w        = data.get("weather_data", {})
-env      = data.get("env_data", {})
-yb       = data.get("yb_data", {})
-bus      = data.get("bus_data", {})
+data       = st.session_state.report_data
+m          = data.get("moltke_data", {})
+w          = data.get("weather_data", {})
+env        = data.get("env_data", {})
+yb         = data.get("yb_data", {})
+bus        = data.get("bus_data", {})
 api_health = m.get("api_health", {})
+pk         = st.session_state.parking_data
+bk         = st.session_state.bike_data
 
 # ══════════════════════════════════════════════
-# 🔧 Sidebar：TDX API 診斷面板
+# 🔧 Sidebar：TDX API 診斷面板 + 歷史紀錄
 # ══════════════════════════════════════════════
 with st.sidebar:
     st.markdown("### 🔧 TDX API 診斷")
     diag = engine.tdx_diagnose()
 
-    # Client ID
     if diag["cid_set"]:
         st.success(f"✅ TDX_CLIENT_ID：`{diag['cid_preview']}`")
     else:
         st.error("❌ TDX_CLIENT_ID **未設定**")
         st.code('[secrets]\nTDX_CLIENT_ID = "你的ID"\nTDX_CLIENT_SECRET = "你的Secret"', language="toml")
 
-    # Client Secret
     if diag["csec_set"]:
         st.success("✅ TDX_CLIENT_SECRET：已設定")
     else:
         st.error("❌ TDX_CLIENT_SECRET **未設定**")
 
-    # Token
     if diag["token_ok"]:
         st.success(f"✅ Token 取得成功：`{diag['token_preview']}`")
     else:
         st.error("❌ Token 取得失敗")
 
-    # 錯誤訊息
     if diag["last_error"]:
         st.markdown("**錯誤詳情：**")
         st.code(diag["last_error"], language="text")
-        # 常見錯誤提示
         err = diag["last_error"]
         if "401" in err or "Unauthorized" in err:
             st.warning("💡 Client ID 或 Secret 錯誤，請至 TDX 會員中心確認金鑰")
@@ -166,7 +192,6 @@ with st.sidebar:
         elif "逾時" in err or "Timeout" in err:
             st.warning("💡 網路無法連到 TDX，請確認部署環境可對外連線")
 
-    # 手動重置 Token 快取
     if st.button("🔄 重置 Token 快取並重試"):
         st.session_state.tdx_token     = None
         st.session_state.tdx_token_exp = 0
@@ -197,6 +222,23 @@ with st.sidebar:
         language="toml"
     )
 
+    # ── 歷史查詢紀錄 ──
+    history = st.session_state.get("history", [])
+    if history:
+        st.divider()
+        st.markdown("### 📂 歷史查詢紀錄")
+        for i, h in enumerate(history):
+            city_label = h.get("city", "")
+            val = h.get("moltke_data", {}).get("core_summary", {}).get("valuation", "--")
+            if st.button(f"📍 {city_label[:18]}\n💰 {val} 萬/坪", key=f"hist_{i}"):
+                st.session_state.report_data = h
+                st.session_state.parking_data = engine.get_parking_data(h["lat"], h["lon"])
+                st.session_state.bike_data    = engine.get_bike_lanes(h["lat"], h["lon"])
+                st.rerun()
+
+# ══════════════════════════════════════════════
+# 🏠 主頁面
+# ══════════════════════════════════════════════
 st.markdown('<div class="hero-title">OmniUrban Spatial Engine</div>', unsafe_allow_html=True)
 st.markdown(f"""
 <div class="status-capsule">
@@ -206,6 +248,8 @@ st.markdown(f"""
     <div>Weather: {w.get('temp','--')}</div>
     <div>AQI: {env.get('aqi','--')} ({env.get('api_status','--')})</div>
     <div>YouBike: {yb.get('source','--')}</div>
+    <div>停車: {pk.get('status','--')}</div>
+    <div>單車道: {bk.get('status','--')}</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -216,9 +260,9 @@ with st.container():
         manual_addr = st.text_input("直接輸入完整地址", placeholder="例如：臺北市文山區指南路二段64號", label_visibility="collapsed")
     with c2:
         sel_floor = st.selectbox("評估類型", ["全棟評估", "1樓店面", "4~5樓公寓", "電梯大樓"], label_visibility="collapsed")
-    
-    st.write("") 
-    
+
+    st.write("")
+
     st.markdown('<div style="color:#64748b; font-size:0.85rem; margin:8px 0;">或使用下方選單快速定位：</div>', unsafe_allow_html=True)
     c3, c4, c5, c6 = st.columns([1, 1, 1.5, 1])
     with c3: sel_city = st.selectbox("縣市", ["--"] + list(engine.taiwan_data.keys()), label_visibility="collapsed")
@@ -227,9 +271,9 @@ with st.container():
         roads = engine.get_roads_list(sel_city, sel_dist)
         sel_road = st.selectbox("路段", roads if roads else ["--"], disabled=(sel_dist == "--" or not roads), label_visibility="collapsed")
     with c6: sel_num = st.text_input("門牌", placeholder="巷/弄/門牌號 (選填)", label_visibility="collapsed")
-    
-    st.write("") 
-    
+
+    st.write("")
+
     if st.button("啟動特徵空間分析 (RUN ANALYSIS)"):
         final_target = manual_addr if manual_addr else f"{sel_city}{sel_dist}{sel_road if not sel_road.startswith('--') else ''}{sel_num}"
         if final_target.strip() and final_target != "--":
@@ -238,12 +282,18 @@ with st.container():
                 if res:
                     st.session_state.report_data = res
                     engine.save_to_history()
+                    lat = res.get("lat", 25.0330)
+                    lon = res.get("lon", 121.5654)
+                    # 新增：同步取得停車場與自行車道資料
+                    st.session_state.parking_data = engine.get_parking_data(lat, lon)
+                    st.session_state.bike_data    = engine.get_bike_lanes(lat, lon)
                     st.rerun()
 
 if not data.get("city"): st.stop()
 st.write("")
 st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
+# ── 估價 + 歷史走勢 ──
 cs_data = m.get("core_summary", {})
 col1, col2 = st.columns(2)
 with col1:
@@ -281,8 +331,9 @@ with col2:
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     st.markdown('</div>', unsafe_allow_html=True)
 
-st.write("") 
+st.write("")
 
+# ── Street View ──
 g_key      = data.get("google_key", "")
 sv_heading = data.get("sv_heading", 0)
 sv_html = (
@@ -301,8 +352,9 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.write("") 
+st.write("")
 
+# ── Dual Map ──
 st.markdown('<div class="lbl" style="font-size:1.1rem;margin-bottom:10px;">Dual-Map Spatial Radar (點擊地圖任意處可同步解析新位置)</div>', unsafe_allow_html=True)
 st.markdown('<div class="metric-card" style="padding:0;overflow:hidden;">', unsafe_allow_html=True)
 d_map = engine.create_dual_map(data["lat"], data["lon"], data.get("raw_pois", []))
@@ -319,8 +371,11 @@ if map_out and map_out.get("last_clicked"):
             st.rerun()
 st.markdown('</div>', unsafe_allow_html=True)
 
-st.write("") 
+st.write("")
 
+# ══════════════════════════════════════════════
+# 交通資訊列（YouBike / 公車 / 環境）
+# ══════════════════════════════════════════════
 c_left, c_mid, c_right = st.columns(3)
 
 with c_left:
@@ -328,19 +383,24 @@ with c_left:
     yb_empty = str(yb.get('empty_slots', '--'))
     yb_dist  = yb.get('dist', '--')
     yb_src   = yb.get('source', '')
-    has_bikes = yb_bikes not in ('0', '--', '')
+    # ✅ 修復：安全轉型，避免 '?' 導致 int() 崩潰
+    try:
+        has_bikes = int(yb_bikes) > 0
+    except:
+        has_bikes = False
     yb_color = "color-primary" if has_bikes else "color-danger"
     yb_dist_str = f"{yb_dist}m" if yb_dist not in ('--', '') else "--"
 
-    # 🚀 壓平字串，防止 Markdown 縮排錯誤
     yb_nearby = yb.get('nearby_stations', [])
     yb_board = ""
     if yb_nearby and len(yb_nearby) > 1:
         yb_rows = ""
-        for s in yb_nearby[1:]: 
-            c = "#14B8A6" if int(s['bikes']) > 0 else "#EF4444"
-            yb_rows += f"<div class='bus-row'><div><span class='bus-route'>{s['name']}</span><span class='bus-dir'>({s['dist']}m)</span></div><div style='color:{c}; font-weight:700; font-size:0.9rem;'>{s['bikes']} 輛 <span style='color:#64748b;font-weight:400;font-size:0.75rem;'>/ {s['empty']} 空</span></div></div>"
-            
+        for s in yb_nearby[1:]:
+            try:
+                c_color = "#14B8A6" if int(s['bikes']) > 0 else "#EF4444"
+            except:
+                c_color = "#64748b"
+            yb_rows += f"<div class='bus-row'><div><span class='bus-route'>{s['name']}</span><span class='bus-dir'>({s['dist']}m)</span></div><div style='color:{c_color}; font-weight:700; font-size:0.9rem;'>{s['bikes']} 輛 <span style='color:#64748b;font-weight:400;font-size:0.75rem;'>/ {s['empty']} 空</span></div></div>"
         yb_board = f"<details style='margin-top: 12px;'><summary style='cursor: pointer; color: #38BDF8; font-size: 0.85rem; font-weight: 600; padding: 6px 0; outline: none;'>👇 附近其他 {len(yb_nearby)-1} 個站點</summary><div class='bus-board' style='max-height: 160px; overflow-y: auto; margin-top: 4px;'>{yb_rows}</div></details>"
 
     st.markdown(f"""
@@ -362,12 +422,11 @@ with c_left:
     </div>""", unsafe_allow_html=True)
 
 with c_mid:
-    bus_dist   = bus.get('dist', '--')
-    bus_src    = bus.get('source', '')
-    arrivals   = bus.get('arrivals', [])
+    bus_dist     = bus.get('dist', '--')
+    bus_src      = bus.get('source', '')
+    arrivals     = bus.get('arrivals', [])
     bus_dist_str = f"{bus_dist}m" if bus_dist not in ('--', '') else "--"
 
-    # 🚀 壓平字串，防止 Markdown 縮排錯誤
     if arrivals:
         rows_html = ""
         for a in arrivals:
@@ -377,7 +436,6 @@ with c_mid:
             plate_str = f"<span style='color:#475569;font-size:0.75rem;'> [{plate}]</span>" if plate and plate != "noPlate" else ""
             dir_str = f"<span class='bus-dir'>({a.get('dir','')})</span>"
             rows_html += f"<div class='bus-row'><div><span class='bus-route'>{a['route']}</span>{dir_str}{plate_str}</div><div class='{eta_cls}'>{a['label']}</div></div>"
-            
         board = f"<details style='margin-top: 8px;'><summary style='cursor: pointer; color: #38BDF8; font-size: 0.85rem; font-weight: 600; padding: 6px 0; outline: none;'>👇 點擊展開所有路線 ({len(arrivals)} 班次)</summary><div class='bus-board' style='max-height: 200px; overflow-y: auto; margin-top: 4px;'>{rows_html}</div></details>"
     else:
         no_data_msg = "TDX 未設定，顯示靜態站名" if "Google" in bus_src else "此區域暫無動態資料"
@@ -408,8 +466,79 @@ with c_right:
         <div class="sub">觀測站：衛星精確定位</div>
     </div>""", unsafe_allow_html=True)
 
-st.write("") 
+st.write("")
 
+# ══════════════════════════════════════════════
+# 🆕 新增資訊列：停車場 + 自行車道
+# ══════════════════════════════════════════════
+cp1, cp2 = st.columns(2)
+
+with cp1:
+    pk_src   = pk.get('source', '--')
+    pk_lots  = pk.get('lots', [])
+    pk_status = pk.get('status', '🔴')
+
+    if pk_lots:
+        pk_rows = ""
+        for lot in pk_lots:
+            avail = lot.get('available', '--')
+            total = lot.get('total', '--')
+            try:
+                avail_int = int(avail)
+                pk_color = "#14B8A6" if avail_int > 20 else "#F59E0B" if avail_int > 5 else "#EF4444"
+            except:
+                pk_color = "#64748b"
+            avail_label = f"{avail} / {total}" if total != '--' else str(avail)
+            pk_rows += f"<div class='park-row'><span class='park-name'>{lot.get('name','--')}</span><span class='park-avail' style='color:{pk_color};'>{avail_label} 格</span></div>"
+        pk_board = f"<div class='bus-board' style='margin-top:12px;'>{pk_rows}</div>"
+    else:
+        pk_board = "<div class='bus-board'><div class='bus-row' style='color:#475569;'>附近無即時停車資料</div></div>"
+
+    st.markdown(f"""
+    <div class="metric-card" style="padding:24px;">
+        <span class="lbl">🅿️ 附近停車場 <span class="source-tag">{pk_src}</span></span>
+        <div class="val-text {'color-primary' if pk_lots else 'color-danger'}" style="margin-bottom:4px;">
+            {'即時車位' if pk_lots else '暫無資料'}
+        </div>
+        <div class="sub" style="margin-bottom:0;">顯示 1km 內停車場即時剩餘格數</div>
+        {pk_board}
+    </div>""", unsafe_allow_html=True)
+
+with cp2:
+    bk_src    = bk.get('source', '--')
+    bk_count  = bk.get('count', 0)
+    bk_nearest = bk.get('nearest', '--')
+    bk_status  = bk.get('status', '🔴')
+    bk_color   = "color-primary" if bk_count > 0 else "color-danger"
+    bk_label   = f"偵測到 {bk_count} 處" if bk_count > 0 else "附近無資料"
+
+    st.markdown(f"""
+    <div class="metric-card" style="padding:24px;">
+        <span class="lbl">🚴 自行車道 / 單車設施 <span class="source-tag">{bk_src}</span></span>
+        <div class="val-text {bk_color}" style="margin-bottom:4px;">{bk_label}</div>
+        <div class="sub">最近設施：{bk_nearest}</div>
+        <div class="sub" style="margin-top:12px;">偵測半徑：1000m 內自行車道與租賃站</div>
+        <div class="bus-board" style="margin-top:12px;">
+            <div class="bus-row">
+                <span style="color:#94A3B8;font-size:0.85rem;">🚲 YouBike 最近站</span>
+                <span style="color:#38BDF8;font-weight:600;">{yb.get('station','--')}</span>
+            </div>
+            <div class="bus-row">
+                <span style="color:#94A3B8;font-size:0.85rem;">📍 距離</span>
+                <span style="color:#E5E7EB;">{str(yb.get('dist','--')) + 'm' if yb.get('dist','--') not in ('--','') else '--'}</span>
+            </div>
+            <div class="bus-row">
+                <span style="color:#94A3B8;font-size:0.85rem;">🛣️ 附近車道數</span>
+                <span style="color:#{'14B8A6' if bk_count > 0 else '475569'};">{bk_count} 條</span>
+            </div>
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+st.write("")
+
+# ══════════════════════════════════════════════
+# 生活圈 6 大機能解析
+# ══════════════════════════════════════════════
 st.markdown("""
 <div style="margin-bottom:10px;">
   <span class="lbl" style="font-size:1.1rem;display:inline-block;margin-right:16px;">Area Capabilities (生活圈 6 大機能解析)</span>

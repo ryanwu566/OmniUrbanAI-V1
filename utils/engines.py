@@ -1,12 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-OmniUrban Intelligence Engine v10.9 (TDX 終極修復版)
+OmniUrban Intelligence Engine v11.0 (全面修復版)
 ===================================================
-1. TDX 核心升級：精準對齊官方 Sample Code，加入 gzip 規範。
-2. 解除 TDX 隱藏的 $top=30 預設限制，強制抓取半徑內所有動態 (Top 300)，修復資料為 0 的 Bug。
-3. 公車配對演算法升級：精確使用 StopUID 進行配對，保證動態 100% 吻合。
-4. 軌道運輸滿配：自動將附近 1.5km 內的捷運/火車站置頂於公車看板。
-(前端儀表板完全不動)
+修復項目：
+1. 【致命】新增 tdx_diagnose() 方法 — 儀表板 sidebar 呼叫此方法但原版不存在，導致整個 sidebar 崩潰。
+2. 【致命】TDX OAuth2 Token 取得改用獨立 requests.post（不帶自訂 Session User-Agent），
+         並完整記錄 last_error，讓診斷面板能顯示真實錯誤原因。
+3. 【中】捷運 NearBy API endpoint 路徑修正：
+         原版 /v2/Rail/Metro/Station/NearBy 不存在；
+         改為嘗試多個系統代碼（TRTC/KRTC/TYMC/TESC/KLRT）。
+4. 【中】YouBike $top 提高到 50/100，避免台北大量站點被截斷。
+5. 【小】Bus ETA spatialFilter 半徑與 Stop 查詢半徑保持一致（都 1000m），
+         防止 600m ETA 抓不到 1000m 才找到的站牌。
+6. 【小】_tdx_get 在 429 後自動 sleep 1s 再回傳 None，避免後續呼叫繼續觸發限流。
+7. 【新功能】get_bike_lanes() — 自行車道資訊（TDX CyclingShape API）。
+8. 【新功能】get_parking_data() — 停車場即時資訊（TDX ParkingLot API）。
 """
 
 import streamlit as st
@@ -35,6 +43,16 @@ CITY_CODES = {
 }
 NAME_TO_CODE = {v: k for k, v in CITY_CODES.items()}
 NAME_TO_CODE.update({"臺北市": "A", "臺中市": "B", "臺南市": "D", "臺東縣": "T"})
+
+# 捷運系統代碼對應表（TDX 正確 endpoint 需要系統代碼）
+MRT_SYSTEMS = [
+    ("TRTC", "台北捷運"),
+    ("KRTC", "高雄捷運"),
+    ("TYMC", "桃園捷運"),
+    ("TESC", "台中捷運"),
+    ("KLRT", "淡海輕軌"),
+    ("CRTC", "環狀線"),
+]
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_city_data(city_name: str, trade_type: str = "A") -> list[dict]:
@@ -76,6 +94,7 @@ class OmniEngine:
         if "history" not in st.session_state: st.session_state.history = []
         if "tdx_token" not in st.session_state: st.session_state.tdx_token = None
         if "tdx_token_exp" not in st.session_state: st.session_state.tdx_token_exp = 0
+        if "tdx_last_error" not in st.session_state: st.session_state.tdx_last_error = ""
 
     def get_roads_list(self, city, dist):
         if city == "--" or dist == "--": return []
@@ -112,7 +131,38 @@ class OmniEngine:
         return None
 
     # ──────────────────────────────────────────────────
-    # ✅ TDX OAuth2
+    # ✅ TDX 診斷面板（修復：原版缺少此方法導致 sidebar 崩潰）
+    # ──────────────────────────────────────────────────
+    def tdx_diagnose(self) -> dict:
+        """
+        回傳 TDX 設定與 Token 狀態的診斷字典，供 sidebar 顯示。
+        原版 engines.py 完全缺少此方法，是 API 異常的根本原因之一。
+        """
+        cid  = st.secrets.get("TDX_CLIENT_ID", "")
+        csec = st.secrets.get("TDX_CLIENT_SECRET", "")
+
+        cid_set   = bool(cid)
+        csec_set  = bool(csec)
+        cid_preview = f"{cid[:6]}…{cid[-4:]}" if len(cid) > 10 else cid
+
+        # 嘗試取得 token（使用已快取的或重新取得）
+        token = self._get_tdx_token()
+        token_ok = bool(token)
+        token_preview = f"{token[:12]}…" if token and len(token) > 12 else (token or "")
+
+        last_error = st.session_state.get("tdx_last_error", "")
+
+        return {
+            "cid_set":       cid_set,
+            "csec_set":      csec_set,
+            "cid_preview":   cid_preview,
+            "token_ok":      token_ok,
+            "token_preview": token_preview,
+            "last_error":    last_error,
+        }
+
+    # ──────────────────────────────────────────────────
+    # ✅ TDX OAuth2（修復：改用獨立 requests，完整記錄錯誤）
     # ──────────────────────────────────────────────────
     def _get_tdx_token(self):
         now = time.time()
@@ -121,11 +171,15 @@ class OmniEngine:
 
         cid  = st.secrets.get("TDX_CLIENT_ID", "")
         csec = st.secrets.get("TDX_CLIENT_SECRET", "")
+
         if not cid or not csec:
+            err = "TDX_CLIENT_ID 或 TDX_CLIENT_SECRET 尚未在 Streamlit Secrets 中設定，找不到金鑰"
+            print(f"[TDX] {err}")
+            st.session_state.tdx_last_error = err
             return None
 
         try:
-            # ✅ 用獨立 requests 呼叫，避免 self.http session 的 User-Agent 干擾
+            # ✅ 必須用獨立 requests.post，不能帶自訂 User-Agent Session
             #    content-type 必須是 application/x-www-form-urlencoded（官方規範）
             r = requests.post(
                 "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
@@ -137,13 +191,27 @@ class OmniEngine:
                 },
                 timeout=10
             )
+            if r.status_code == 401:
+                err = f"401 Unauthorized — Client ID 或 Secret 錯誤（請至 TDX 會員中心確認金鑰）"
+                st.session_state.tdx_last_error = err
+                st.session_state.tdx_token = None
+                return None
             r.raise_for_status()
             j = r.json()
             st.session_state.tdx_token     = j["access_token"]
             st.session_state.tdx_token_exp = now + j.get("expires_in", 86400)
+            st.session_state.tdx_last_error = ""   # 清除舊錯誤
             return st.session_state.tdx_token
+        except requests.exceptions.Timeout:
+            err = "逾時 (Timeout) — 無法連到 TDX，請確認部署環境可對外連線"
+            print(f"[TDX] Auth Error: {err}")
+            st.session_state.tdx_last_error = err
+            st.session_state.tdx_token = None
+            return None
         except Exception as e:
-            print(f"[TDX] Auth Error: {e}")
+            err = str(e)
+            print(f"[TDX] Auth Error: {err}")
+            st.session_state.tdx_last_error = err
             st.session_state.tdx_token = None
             return None
 
@@ -177,6 +245,7 @@ class OmniEngine:
 
             if r.status_code == 429:
                 print(f"[TDX] 429 Rate limit on {url}")
+                time.sleep(1)  # ✅ 修復：429 後稍作等待，避免後續呼叫繼續觸發限流
                 return None
 
             r.raise_for_status()
@@ -204,19 +273,18 @@ class OmniEngine:
         except: return {"aqi": "--", "status": "--", "api_status": "🔴"}
 
     # ──────────────────────────────────────────────────
-    # ✅ YouBike (突破 $top 限制，強制配對)
+    # ✅ YouBike（修復：$top 提高，避免台北被截斷）
     # ──────────────────────────────────────────────────
     def get_youbike_data(self, lat, lon, addr=""):
         token = self._get_tdx_token()
         if token:
             try:
-                # ✅ 加 $select 縮小回傳欄位，避免超出免費方案資料量限制
                 stations = self._tdx_get(
                     "https://tdx.transportdata.tw/api/basic/v2/Bike/Station/NearBy",
                     params={
                         "$spatialFilter": f"nearby({lat},{lon},1200)",
                         "$format":        "JSON",
-                        "$top":           20,
+                        "$top":           50,   # ✅ 修復：原版 20 在大台北常截斷
                         "$select":        "StationUID,StationName,StationPosition",
                     }
                 )
@@ -230,13 +298,12 @@ class OmniEngine:
 
                     stations.sort(key=_d)
 
-                    # ✅ 同樣加 $select 只抓可借/可還數量
                     avails = self._tdx_get(
                         "https://tdx.transportdata.tw/api/basic/v2/Bike/Availability/NearBy",
                         params={
                             "$spatialFilter": f"nearby({lat},{lon},1200)",
                             "$format":        "JSON",
-                            "$top":           50,
+                            "$top":           100,  # ✅ 修復：原版 50 可能不足
                             "$select":        "StationUID,AvailableRentBikes,AvailableReturnBikes",
                         }
                     ) or []
@@ -272,7 +339,7 @@ class OmniEngine:
         }
 
     # ──────────────────────────────────────────────────
-    # ✅ TDX 公車 (徹底修復漏班與排序問題)
+    # ✅ TDX 公車（修復：ETA 半徑與 Stop 半徑保持一致）
     # ──────────────────────────────────────────────────
     def get_bus_data(self, lat, lon, addr=""):
         token = self._get_tdx_token()
@@ -280,8 +347,6 @@ class OmniEngine:
             return self._bus_google_fallback(lat, lon)
 
         try:
-            # ✅ 正確 endpoint：Bus/Stop/NearBy（不是 Station/NearBy）
-            #    Station 是「公車站位」，Stop 是「公車站牌」，ETA 綁定的是 Stop
             stops = self._tdx_get(
                 "https://tdx.transportdata.tw/api/basic/v2/Bus/Stop/NearBy",
                 params={
@@ -293,7 +358,9 @@ class OmniEngine:
             )
 
             # 600m 找不到就擴大到 1000m
+            search_radius = 600
             if not stops:
+                search_radius = 1000
                 stops = self._tdx_get(
                     "https://tdx.transportdata.tw/api/basic/v2/Bus/Stop/NearBy",
                     params={
@@ -318,23 +385,20 @@ class OmniEngine:
             nearest_name = nearest.get("StopName", {}).get("Zh_tw", "--")
             nearest_dist = _d(nearest)
 
-            # 收集附近所有 StopUID（用於精確配對 ETA）
             stop_uid_set = {s.get("StopUID") for s in stops if s.get("StopUID")}
 
-            # ✅ ETA：用 Stop/NearBy 同半徑抓取，加 $select 縮減流量
+            # ✅ 修復：ETA 半徑與 Stop 查詢半徑保持一致，防止找到的站牌抓不到 ETA
             etas = self._tdx_get(
                 "https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/NearBy",
                 params={
-                    "$spatialFilter": f"nearby({lat},{lon},600)",
+                    "$spatialFilter": f"nearby({lat},{lon},{search_radius})",
                     "$format":        "JSON",
-                    "$top":           100,
+                    "$top":           200,  # ✅ 修復：原版 100 在大站可能不足
                     "$select":        "StopUID,RouteName,EstimateTime,StopStatus,Direction,PlateNumb",
                 }
             ) or []
 
-            # 用 StopUID 精確配對
             matched = [e for e in etas if e.get("StopUID") in stop_uid_set]
-            # 若配對為空（部分縣市 UID 格式不同），退回全部 ETA
             if not matched:
                 matched = etas
 
@@ -343,7 +407,7 @@ class OmniEngine:
                 rname  = e.get("RouteName", {}).get("Zh_tw", "")
                 if not rname: continue
                 status = e.get("StopStatus", 0)
-                est    = e.get("EstimateTime")   # 秒
+                est    = e.get("EstimateTime")
                 direc  = e.get("Direction", 0)
                 plate  = e.get("PlateNumb", "")
 
@@ -370,7 +434,7 @@ class OmniEngine:
 
             arrivals = sorted(route_map.values(), key=lambda x: x["urgency"])
 
-            # ✅ 軌道置頂：台鐵
+            # ✅ 修復：台鐵置頂
             try:
                 tra_list = self._tdx_get(
                     "https://tdx.transportdata.tw/api/basic/v2/Rail/TRA/Station/NearBy",
@@ -398,32 +462,38 @@ class OmniEngine:
                     })
             except: pass
 
-            # ✅ 軌道置頂：捷運（台北捷運為例，其他縣市會自動 fallback 無結果）
+            # ✅ 修復：捷運 NearBy — 原版 endpoint 錯誤，改為逐系統嘗試
             try:
-                mrt_list = self._tdx_get(
-                    "https://tdx.transportdata.tw/api/basic/v2/Rail/Metro/Station/NearBy",
-                    params={
-                        "$spatialFilter": f"nearby({lat},{lon},1500)",
-                        "$format": "JSON", "$top": 3,
-                        "$select": "StationName,StationPosition",
-                    }
-                )
-                if mrt_list:
-                    mt = min(mrt_list, key=lambda x: self.calc_real_dist(
-                        lat, lon,
-                        x.get("StationPosition", {}).get("PositionLat", 0),
-                        x.get("StationPosition", {}).get("PositionLon", 0)
-                    ))
-                    md = self.calc_real_dist(
-                        lat, lon,
-                        mt.get("StationPosition", {}).get("PositionLat", 0),
-                        mt.get("StationPosition", {}).get("PositionLon", 0)
+                mrt_found = None
+                for sys_code, sys_name in MRT_SYSTEMS:
+                    mrt_list = self._tdx_get(
+                        f"https://tdx.transportdata.tw/api/basic/v2/Rail/Metro/Station/{sys_code}/NearBy",
+                        params={
+                            "$spatialFilter": f"nearby({lat},{lon},1500)",
+                            "$format": "JSON", "$top": 3,
+                            "$select": "StationName,StationPosition",
+                        }
                     )
-                    arrivals.insert(0, {
-                        "route": f"🚇 捷運 {mt.get('StationName',{}).get('Zh_tw','')}站",
-                        "dir": f"{md}m 步行", "label": "捷運路網",
-                        "urgency": -1, "plate": ""
-                    })
+                    if mrt_list:
+                        mt = min(mrt_list, key=lambda x: self.calc_real_dist(
+                            lat, lon,
+                            x.get("StationPosition", {}).get("PositionLat", 0),
+                            x.get("StationPosition", {}).get("PositionLon", 0)
+                        ))
+                        md = self.calc_real_dist(
+                            lat, lon,
+                            mt.get("StationPosition", {}).get("PositionLat", 0),
+                            mt.get("StationPosition", {}).get("PositionLon", 0)
+                        )
+                        mrt_found = {
+                            "route": f"🚇 {sys_name} {mt.get('StationName',{}).get('Zh_tw','')}站",
+                            "dir": f"{md}m 步行", "label": "捷運路網",
+                            "urgency": -1, "plate": ""
+                        }
+                        break  # 找到最近的捷運系統就停止
+
+                if mrt_found:
+                    arrivals.insert(0, mrt_found)
             except: pass
 
             src = "TDX 即時動態" if route_map else "TDX (目前無班次資料)"
@@ -455,6 +525,109 @@ class OmniEngine:
                 return {"status": "🟡", "station": cl['name'], "dist": dist, "arrivals": [], "source": "Google Places (靜態)"}
         except: pass
         return {"status": "🔴", "station": "附近無站點", "dist": "--", "arrivals": [], "source": ""}
+
+    # ──────────────────────────────────────────────────
+    # ✅ 新功能：自行車道資訊
+    # ──────────────────────────────────────────────────
+    def get_bike_lanes(self, lat, lon):
+        """取得附近自行車道資訊（TDX CyclingShape API）"""
+        try:
+            # 嘗試用 Google Places 抓自行車相關設施
+            gk = st.secrets.get("GOOGLE_MAPS_API_KEY", "")
+            if gk:
+                res = self.http.get(
+                    "https://maps.googleapis.com/maps/api/place/nearbysearch/json",
+                    params={"location": f"{lat},{lon}", "radius": 1000,
+                            "keyword": "自行車 腳踏車 單車", "language": "zh-TW", "key": gk},
+                    timeout=5
+                ).json()
+                results = res.get("results", [])
+                if results:
+                    return {
+                        "status": "🟢",
+                        "count": len(results),
+                        "nearest": results[0].get("name", "--"),
+                        "source": "Google Places"
+                    }
+        except: pass
+
+        # 嘗試 TDX 自行車道 API
+        token = self._get_tdx_token()
+        if token:
+            try:
+                data = self._tdx_get(
+                    "https://tdx.transportdata.tw/api/basic/v2/Cycling/Shape/NearBy",
+                    params={
+                        "$spatialFilter": f"nearby({lat},{lon},1000)",
+                        "$format": "JSON", "$top": 10,
+                        "$select": "RouteName,CyclingType,RoadSectionStart,RoadSectionEnd",
+                    }
+                )
+                if data:
+                    return {
+                        "status": "🟢",
+                        "count": len(data),
+                        "nearest": data[0].get("RouteName", {}).get("Zh_tw", "--") if data else "--",
+                        "source": "TDX 自行車道"
+                    }
+            except: pass
+
+        return {"status": "🔴", "count": 0, "nearest": "--", "source": "無資料"}
+
+    # ──────────────────────────────────────────────────
+    # ✅ 新功能：停車場即時資訊
+    # ──────────────────────────────────────────────────
+    def get_parking_data(self, lat, lon):
+        """取得附近停車場即時剩餘車位（TDX ParkingLot API）"""
+        token = self._get_tdx_token()
+        if token:
+            try:
+                lots = self._tdx_get(
+                    "https://tdx.transportdata.tw/api/basic/v2/Parking/OffStreet/ParkingLot/NearBy",
+                    params={
+                        "$spatialFilter": f"nearby({lat},{lon},800)",
+                        "$format": "JSON", "$top": 5,
+                        "$select": "ParkingLotID,ParkingLotName,ParkingLotPosition,PayGuide",
+                    }
+                )
+                if lots:
+                    # 取得即時車位
+                    lot_ids = [l.get("ParkingLotID", "") for l in lots if l.get("ParkingLotID")]
+                    avail_list = []
+                    for lid in lot_ids[:3]:
+                        avail = self._tdx_get(
+                            f"https://tdx.transportdata.tw/api/basic/v2/Parking/OffStreet/Availability/{lid}",
+                            params={"$format": "JSON"}
+                        )
+                        if avail and isinstance(avail, list) and avail:
+                            a = avail[0]
+                            name = next((l.get("ParkingLotName", {}).get("Zh_tw", lid)
+                                        for l in lots if l.get("ParkingLotID") == lid), lid)
+                            avail_list.append({
+                                "name": name,
+                                "available": a.get("AvailableSpaces", "--"),
+                                "total": a.get("TotalSpaces", "--"),
+                            })
+
+                    if avail_list:
+                        return {
+                            "status": "🟢",
+                            "lots": avail_list,
+                            "source": "TDX 即時"
+                        }
+
+                    # 有停車場但無即時資料
+                    if lots:
+                        return {
+                            "status": "🟡",
+                            "lots": [{"name": l.get("ParkingLotName", {}).get("Zh_tw", "--"),
+                                      "available": "--", "total": "--"} for l in lots[:3]],
+                            "source": "TDX 靜態"
+                        }
+            except Exception as e:
+                print(f"[TDX] Parking Error: {e}")
+
+        return {"status": "🔴", "lots": [], "source": "無資料"}
 
     def get_real_poi_scores(self, lat, lon, addr):
         google_key = st.secrets.get("GOOGLE_MAPS_API_KEY", "")
