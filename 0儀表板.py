@@ -246,6 +246,73 @@ with st.sidebar:
         language="toml"
     )
 
+    # ── 座標 & TDX API 直接測試 ──
+    st.divider()
+    st.markdown("### 🗺️ 目前分析座標")
+    _d = st.session_state.report_data
+    _lat = _d.get("lat", 25.0330)
+    _lon = _d.get("lon", 121.5654)
+    _city = _d.get("city", "（尚未查詢）")
+    st.code(f"地址：{_city}\nlat = {_lat}\nlon = {_lon}", language="text")
+    if _lat == 25.0330 and _lon == 121.5654:
+        st.warning("⚠️ 座標是預設值 — 地址未成功 Geocode，請確認 GOOGLE_MAPS_API_KEY 已設定")
+
+    st.markdown("### 🔬 TDX API 直接測試")
+    _test_lat = st.number_input("測試緯度", value=float(_lat), format="%.6f", key="test_lat")
+    _test_lon = st.number_input("測試經度", value=float(_lon), format="%.6f", key="test_lon")
+    if st.button("🚲 測試 YouBike NearBy"):
+        import requests as _req
+        _tok = engine._get_tdx_token()
+        if _tok:
+            _r = _req.get(
+                "https://tdx.transportdata.tw/api/basic/v2/Bike/Station/NearBy",
+                headers={"Authorization": f"Bearer {_tok}", "Accept": "application/json"},
+                params={"$spatialFilter": f"nearby({_test_lat},{_test_lon},1200)",
+                        "$format": "JSON", "$top": 5,
+                        "$select": "StationUID,StationName,StationPosition"},
+                timeout=10
+            )
+            st.code(f"HTTP {_r.status_code}", language="text")
+            try:
+                _j = _r.json()
+                if isinstance(_j, list):
+                    st.success(f"✅ 找到 {len(_j)} 個站點")
+                    for _s in _j[:3]:
+                        _n = _s.get("StationName", {}).get("Zh_tw", "?")
+                        _p = _s.get("StationPosition", {})
+                        st.caption(f"• {_n} ({_p.get('PositionLat')}, {_p.get('PositionLon')})")
+                else:
+                    st.json(_j)
+            except Exception as _e:
+                st.code(_r.text[:400])
+        else:
+            st.error("Token 無效")
+    if st.button("🚌 測試公車 Stop NearBy"):
+        import requests as _req
+        _tok = engine._get_tdx_token()
+        if _tok:
+            _r = _req.get(
+                "https://tdx.transportdata.tw/api/basic/v2/Bus/Stop/NearBy",
+                headers={"Authorization": f"Bearer {_tok}", "Accept": "application/json"},
+                params={"$spatialFilter": f"nearby({_test_lat},{_test_lon},800)",
+                        "$format": "JSON", "$top": 5,
+                        "$select": "StopUID,StopName,StopPosition"},
+                timeout=10
+            )
+            st.code(f"HTTP {_r.status_code}", language="text")
+            try:
+                _j = _r.json()
+                if isinstance(_j, list):
+                    st.success(f"✅ 找到 {len(_j)} 個站牌")
+                    for _s in _j[:3]:
+                        st.caption(f"• {_s.get('StopName',{}).get('Zh_tw','?')}")
+                else:
+                    st.json(_j)
+            except Exception as _e:
+                st.code(_r.text[:400])
+        else:
+            st.error("Token 無效")
+
     # ── 歷史查詢紀錄 ──
     history = st.session_state.get("history", [])
     if history:
