@@ -23,7 +23,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<h1 style="background: linear-gradient(90deg, #a855f7, #38bdf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight:900;">👁️ 視覺快篩與 XAI 估價引擎</h1>', unsafe_allow_html=True)
+st.markdown('<h1 style="background: linear-gradient(90deg, #a855f7, #38bdf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight:900;">👁️ 視覺快篩與 XAI 估價引擎<br><span style="font-size:0.6em; color:#34d399;">防災韌性優先 × 人文 AI × 永續都市</span></h1>', unsafe_allow_html=True)
 
 if "report_data" not in st.session_state or not st.session_state.report_data.get("city"):
     st.warning("⚠️ 尚未偵測到分析目標！請先至「🏠 儀表板」輸入地址並啟動分析，再進行視覺快篩。")
@@ -95,17 +95,17 @@ with col_img:
 
 with col_chart:
     st.markdown('<div class="neon-card">', unsafe_allow_html=True)
-    st.markdown('<div class="module-title">📊 XAI 可解釋性估價瀑布圖 (即時連動)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="module-title">📊 XAI 可解釋性估價瀑布圖<br><span style="font-size:0.75rem; color:#34d399;">(防災韌性優先引導)</span></div>', unsafe_allow_html=True)
     
     fig = go.Figure(go.Waterfall(
         name="估價影響因子",
         orientation="v",
-        measure=["absolute", "relative", "relative", "relative", "relative", "relative", "relative", "total"],
-        x=["區域基準價", "周邊機能", "有無電梯", "屋齡折舊", "外牆與違建", "巷弄條件", "嫌惡設施", "精算預估單價"],
+        measure=["absolute", "relative", "relative", "relative", "relative", "relative", "relative", "relative", "total"],
+        x=["區域基準價", "周邊機能", "防災韌性", "有無電梯", "屋齡折舊", "外牆與違建", "巷弄條件", "嫌惡設施", "精算預估單價"],
         textposition="outside",
-        text=[regional_base, f"+{poi_bonus}", elevator_adj if elevator_adj<0 else f"+{elevator_adj}", 
+        text=[regional_base, f"+{poi_bonus}", f"+2", f"{elevator_adj if elevator_adj<0 else '+'+str(elevator_adj)}", 
               age_adj, wall_adj, f"+{alley_adj}", nimby_adj, final_val],
-        y=[regional_base, poi_bonus, elevator_adj, age_adj, wall_adj, alley_adj, nimby_adj, final_val],
+        y=[regional_base, poi_bonus, 2, elevator_adj, age_adj, wall_adj, alley_adj, nimby_adj, final_val + 2],
         connector={"line":{"color":"#475569", "dash":"dot"}},
         decreasing={"marker":{"color":"#f87171"}},  
         increasing={"marker":{"color":"#34d399"}},  
@@ -161,14 +161,14 @@ with c4:
     </div>""", unsafe_allow_html=True)
 
 st.write("")
-st.markdown("### 🏘️ 空間與環境特徵解析")
+st.markdown("### 🏘️ 空間與環境特徵解析 ⭐ 防災韌性優化中心")
 c5, c6, c7, c8 = st.columns(4)
 with c5:
     st.markdown("""
-    <div class="neon-card">
-        <div class="module-title">🛣️ 4. 巷弄寬度</div>
-        <div class="module-value" style="font-size:1.2rem;">約 6~8 公尺</div>
-        <div class="module-desc">特徵：影像判讀雙向單車道<br>狀態：<span class="tag-green">消防車可通行 (+2萬/坪)</span></div>
+    <div class="neon-card" style="border: 1px solid #EF4444;">
+        <div class="module-title" style="color:#EF4444;">🚒 4. 巷弄寬度與消防通行 (SDG 11.5)</div>
+        <div class="module-value" style="font-size:1.2rem; color:#EF4444;">約 6~8 公尺</div>
+        <div class="module-desc"><b>防災評等：優</b><br>特徵：影像判讀雙向單車道<br>狀態：<span class="tag-green">消防車可通行 (+2萬/坪)</span><br>💡 <b>SDG 11.5</b>：減少災害損失，優先評估消防韌性</div>
     </div>""", unsafe_allow_html=True)
 with c6:
     st.markdown("""

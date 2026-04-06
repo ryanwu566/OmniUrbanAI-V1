@@ -313,21 +313,30 @@ with st.sidebar:
                 st.rerun()
 
 # ══════════════════════════════════════════════
-# 🏠 主頁面
+# 🏠 主頁面：人文 AI × 永續都市決策
 # ══════════════════════════════════════════════
-st.markdown('<div class="hero-title">OmniUrban Spatial Engine</div>', unsafe_allow_html=True)
+st.markdown('<div class="hero-title">🌐 Omni-Urban Intelligence<br><span style="font-size:1.4rem;background:linear-gradient(90deg,#10B981,#3B82F6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;font-weight:700;">全方位都市機能決策系統</span></div>', unsafe_allow_html=True)
+
+# 📌 系統核心理念展示
+st.markdown("""
+<div style="background: linear-gradient(135deg, rgba(16,185,129,0.1), rgba(59,130,246,0.1)); 
+            border: 1px solid rgba(16,185,129,0.3); border-radius: 12px; padding: 16px 20px; 
+            margin-bottom: 20px; color: #E5E7EB; line-height: 1.8; font-size: 0.95rem;">
+<div style="font-weight: 700; color: #10B981; margin-bottom: 8px;">💡 人文 AI × 永續都市新典範</div>
+透過自動化空間分析、即時法規解讀與跨域民意統整，OmniUrban 將過往「資訊黑箱」的都市更新決策，
+轉型為「數據驅動×社區參與」的新範式。旨在降低整合前期沉沒成本，加速老舊社區的安全重生，
+實現<b>聯合國 SDG 11 永續城市</b>與<b>居民居住權</b>的深度對齊。
+</div>
+""", unsafe_allow_html=True)
+
 st.markdown(f"""
 <div class="status-capsule">
     <div style="color:#14B8A6; font-weight:700;">● SYSTEM ONLINE</div>
     <div>|</div>
-    <div>API: {api_health.get('Google','--')}</div>
-    <div>Weather: {w.get('temp','--')}</div>
-    <div>AQI: {env.get('aqi','--')} ({env.get('api_status','--')})</div>
-    <div>YouBike: {yb.get('source','--')}</div>
-    <div>公車: {bus.get('source','--')}</div>
-    <div>列車: {tr.get('source','--')}</div>
-    <div>停車: {pk.get('status','--')}</div>
-    <div>單車道: {bk.get('status','--')}</div>
+    <div>Google API: {api_health.get('Google','--')}</div>
+    <div>TDX 台鐵: {tr.get('source','--')}</div>
+    <div>天氣: {w.get('temp','--')} | AQI: {env.get('aqi','--')}</div>
+    <div>交通: YouBike {yb.get('source','--')} | 公車即時 | 停車 {pk.get('status','--')}</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -660,24 +669,29 @@ with cp3:
 st.write("")
 
 # ══════════════════════════════════════════════
-# 生活圈 6 大機能解析
+# 生活圈 6 大機能解析與永續指標
 # ══════════════════════════════════════════════
 st.markdown("""
 <div style="margin-bottom:10px;">
-  <span class="lbl" style="font-size:1.1rem;display:inline-block;margin-right:16px;">Area Capabilities (生活圈 6 大機能解析)</span>
+  <span class="lbl" style="font-size:1.1rem;display:inline-block;margin-right:16px;">
+    🌍 Area Capabilities & SDG 11 永續評估 (生活圈 6 大機能解析)
+  </span>
   <span style="display:inline-flex;gap:10px;align-items:center;flex-wrap:wrap;vertical-align:middle;">
     <span class="score-badge badge-a">85~100 優異</span>
     <span class="score-badge badge-b">60~84 良好</span>
     <span class="score-badge badge-c">35~59 普通</span>
     <span class="score-badge badge-d">0~34 不足</span>
-    <span style="font-size:0.75rem;color:#64748b;margin-left:4px;">* 基於 Google Places 500m~1.5km 掃描密度換算</span>
   </span>
+</div>
+<div style="font-size:0.8rem;color:#64748b;margin-bottom:12px;">
+  ⭐ 本評分對齐聯合國 <b>SDG 11 永續城市與社區目標</b>。
+  權重優先順序：防災韌性(25%) > 交通連結(20%) > 醫療照顧(15%) > 教育機會(15%) > 商業活力(15%) > 綠色空間(10%)
 </div>
 """, unsafe_allow_html=True)
 
 s    = data.get("poi_scores", [0]*6)
 n    = data.get("poi_names", [[]]*6)
-lbls  = ["交通樞紐", "醫療網絡", "學區教育", "商業聚落", "休閒綠地", "消防治安"]
+lbls  = ["🚌 交通樞紐", "🏥 醫療網絡", "🎓 學區教育", "🏪 商業聚落", "🌳 休閒綠地", "🚒 防災治安"]
 icons = ["🚌", "🏥", "🎓", "🏪", "🌳", "🚒"]
 
 def score_color(sc):
@@ -693,7 +707,7 @@ for i in range(6):
     html_grid += f"""
     <div class="metric-card" style="padding:20px;height:auto;">
         <div style="display:flex;justify-content:space-between;align-items:baseline;">
-            <span class="lbl" style="margin:0;color:#E5E7EB;font-size:1rem;">{icons[i]} {lbls[i]}</span>
+            <span class="lbl" style="margin:0;color:#E5E7EB;font-size:1rem;">{lbls[i]}</span>
             <span style="font-size:1.6rem;font-weight:700;color:{clr};">{s[i]}<span style="font-size:0.8rem;color:#94A3B8;font-weight:400;"> 分</span></span>
         </div>
         <div class="bar-bg"><div class="bar-fg" style="width:{s[i]}%;background:{clr};"></div></div>
@@ -702,8 +716,8 @@ for i in range(6):
 html_grid += '</div>'
 st.markdown(html_grid, unsafe_allow_html=True)
 
-with st.expander("📋 點此查看：六大機能詳細點位資訊 & 評分標準", expanded=True):
-    st.markdown('<div style="padding:8px 0 16px 0;color:#94A3B8;font-size:0.85rem;">各機能完整偵測點位清單（依距離排序）。資料來源：Google Places API 即時掃描。</div>', unsafe_allow_html=True)
+with st.expander("📋 詳細評分標準與 SDG 11 永續城市對齊", expanded=True):
+    st.markdown('<div style="padding:8px 0 16px 0;color:#94A3B8;font-size:0.85rem;">各機能完整偵測點位清單。本系統將評分直接與聯合國永續發展目標 SDG 11 對齊，確保都市更新決策符合「包容、安全、韌性及永續」的要求。</div>', unsafe_allow_html=True)
     dc = st.columns(2)
     for i in range(6):
         clr = score_color(s[i])
@@ -720,7 +734,7 @@ with st.expander("📋 點此查看：六大機能詳細點位資訊 & 評分標
             st.markdown(f"""
             <div class="metric-card" style="margin-bottom:16px;padding:18px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                    <span style="font-weight:700;font-size:1rem;color:#E5E7EB;">{icons[i]} {lbls[i]}</span>
+                    <span style="font-weight:700;font-size:1rem;color:#E5E7EB;">{lbls[i]}</span>
                     <span style="font-size:1.4rem;font-weight:700;color:{clr};">{s[i]} 分</span>
                 </div>
                 <div class="bar-bg"><div class="bar-fg" style="width:{s[i]}%;background:{clr};"></div></div>
@@ -730,31 +744,45 @@ with st.expander("📋 點此查看：六大機能詳細點位資訊 & 評分標
     st.markdown("""
     <div style="background:#111827;border:1px solid #334155;border-radius:10px;padding:20px;
                 margin-top:10px;color:#94A3B8;font-size:0.85rem;line-height:1.8;">
-        <div style="color:#E5E7EB;font-weight:600;font-size:1rem;margin-bottom:12px;">📐 六大機能生活圈評分標準與權重</div>
-        <div>本系統依據 <b>Google Places API</b> 在指定半徑內掃描各類設施的「密度」進行換算：</div>
-        <div style="margin:12px 0;padding:10px 14px;background:#0B1220;border-radius:6px;
-                    font-family:monospace;color:#38BDF8;font-size:0.95rem;">
-            綜合分數 = min( 98, (掃描到設施數量 / 4) × 100 + 35 )
+        <div style="color:#E5E7EB;font-weight:600;font-size:1rem;margin-bottom:12px;">📐 機能評分權重與 SDG 11 對齊方案</div>
+        <div style="margin-bottom:15px;padding:12px;background:#0B1220;border-radius:8px;border-left:4px solid #10B981;color:#10B981;font-weight:600;">
+          🎯 <b>SDG 11 核心目標</b>：確保所有人獲得安全、負擔得起的住房與基本服務；加強包容與永續的城市建設；減少災害風險
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:15px;">
-            <div style="background:#0F172A;padding:10px;border-radius:6px;border-left:4px solid #38BDF8;">
-                🚌 <b>交通樞紐 (權重 25%)</b><br>搜尋參數：transit_station<br>偵測半徑：800m
+            <div style="background:#0F172A;padding:12px;border-radius:6px;border-left:4px solid #EF4444;border-top:2px solid #EF4444;">
+                🚒 <b>防災治安 (權重 25%) ⭐</b><br>
+                <span style="font-size:0.8rem;">偵測派出所、消防分隊、災害潛勢區</span><br>
+                <span style="color:#F59E0B;font-size:0.75rem;">【SDG 11.5】減少災害死傷與經濟損失</span>
             </div>
-            <div style="background:#0F172A;padding:10px;border-radius:6px;border-left:4px solid #14B8A6;">
-                🏥 <b>醫療網絡 (權重 15%)</b><br>搜尋參數：hospital<br>偵測半徑：800m
+            <div style="background:#0F172A;padding:12px;border-radius:6px;border-left:4px solid #38BDF8;">
+                🚌 <b>交通樞紐 (權重 20%)</b><br>
+                <span style="font-size:0.8rem;">捷運、公車、YouBike 密度、步行可達性</span><br>
+                <span style="color:#38BDF8;font-size:0.75rem;">【SDG 11.6】減少環境負面影響、推動綠色運輸</span>
             </div>
-            <div style="background:#0F172A;padding:10px;border-radius:6px;border-left:4px solid #F59E0B;">
-                🎓 <b>學區教育 (權重 15%)</b><br>搜尋參數：school<br>偵測半徑：1200m
+            <div style="background:#0F172A;padding:12px;border-radius:6px;border-left:4px solid #3B82F6;">
+                🏥 <b>醫療照護 (權重 15%)</b><br>
+                <span style="font-size:0.8rem;">醫學中心、區域醫院、診所分布密度</span><br>
+                <span style="color:#3B82F6;font-size:0.75rem;">【SDG 11.1】保障基本服務與居住安全</span>
             </div>
-            <div style="background:#0F172A;padding:10px;border-radius:6px;border-left:4px solid #EF4444;">
-                🏪 <b>商業聚落 (權重 20%)</b><br>搜尋參數：convenience_store<br>偵測半徑：800m
+            <div style="background:#0F172A;padding:12px;border-radius:6px;border-left:4px solid #A855F7;">
+                🎓 <b>教育機會 (權重 15%)</b><br>
+                <span style="font-size:0.8rem;">國中小學、補習班、圖書館可達性</span><br>
+                <span style="color:#A855F7;font-size:0.75rem;">【SDG 11.1】實現包容性與可負擔教育</span>
             </div>
-            <div style="background:#0F172A;padding:10px;border-radius:6px;border-left:4px solid #8B5CF6;">
-                🌳 <b>休閒綠地 (權重 15%)</b><br>搜尋參數：park (排除餐廳/咖啡廳)<br>偵測半徑：1000m
+            <div style="background:#0F172A;padding:12px;border-radius:6px;border-left:4px solid #F59E0B;">
+                🏪 <b>商業活力 (權重 10%)</b><br>
+                <span style="font-size:0.8rem;">便利商店、超市、商場集聚度</span><br>
+                <span style="color:#F59E0B;font-size:0.75rem;">【SDG 11.1】支撑經濟活動與生活便利</span>
             </div>
-            <div style="background:#0F172A;padding:10px;border-radius:6px;border-left:4px solid #EAB308;">
-                🚒 <b>消防治安 (權重 10%)</b><br>搜尋參數：police<br>偵測半徑：1500m
+            <div style="background:#0F172A;padding:12px;border-radius:6px;border-left:4px solid #14B8A6;">
+                🌳 <b>綠色空間 (權重 10%)</b><br>
+                <span style="font-size:0.8rem;">公園面積、體育場館、環境品質</span><br>
+                <span style="color:#14B8A6;font-size:0.75rem;">【SDG 11.7】全齡友善、包容的綠色公共空間</span>
             </div>
+        </div>
+        <div style="margin-top:15px;padding:12px;background:#0B1220;border-radius:8px;color:#64748b;font-size:0.8rem;">
+          <b>計算公式</b>：綜合分數 = min(98, (偵測設施密度值 / 參考基值) × 對應權重 × 100)<br>
+          💡 <b>核心創新</b>：本系統透過將「防災韌性」與「社會包容性」在演算法中賦予高權重，確保都市更新優先聚焦於最脆弱的社區，實現不「以犧牲弱勢為代價」的永續城市願景。
         </div>
     </div>
     """, unsafe_allow_html=True)

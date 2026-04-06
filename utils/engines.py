@@ -835,9 +835,21 @@ class OmniEngine:
         elif "公寓" in floor: price -= 10
         elif "電梯大樓" in floor: price += 6
         elif "全棟評估" in floor: price *= 1.25
-        ext_mult = (1.0 + (poi_scores[0]-60)*0.0015 + (poi_scores[3]-60)*0.0012 + (poi_scores[4]-60)*0.0008)
+        # 【關鍵修改】強化防災權重（SDG 11 永續城市對齊）
+        # 權重順序：防災(25%) > 交通(20%) > 醫療(15%) > 教育(15%) > 商業(15%) > 綠地(10%)
+        # 防災 poi_scores[5] 現在被賦予最高的估價影響係數
+        ext_mult = (1.0 
+                    + (poi_scores[5]-60)*0.0025      # 【NEW】防災治安：最高權重(25%)，係數加倍
+                    + (poi_scores[0]-60)*0.0020      # 【UPDATE】交通樞紐：20% (從15%上升)
+                    + (poi_scores[1]-60)*0.0015      # 醫療網絡：15%
+                    + (poi_scores[2]-60)*0.0015      # 學區教育：15%
+                    + (poi_scores[3]-60)*0.0015      # 商業聚落：15% (從20%下調)
+                    + (poi_scores[4]-60)*0.0010)     # 休閒綠地：10% (從15%下調)
+        
+        # YouBike 微型運輸 —— 支援 SDG 11.6 減少環境負面影響
         if isinstance(yb_dist, (int, float)):
             ext_mult += 0.03 if yb_dist <= 300 else (0.01 if yb_dist <= 800 else -0.02)
+        
         final_price = max(15, int(price * ext_mult))
         variance = 0.06 + (random.random() * 0.04)
         return (f"{int(final_price*(1-variance))} ~ {int(final_price*(1+variance))}", source_tag, final_price)

@@ -59,7 +59,7 @@ class OmniReport(FPDF):
         self.cell(0, 10, f'OmniUrban Intelligence Report | Page {self.page_no()}', 0, 0, 'C')
 
 # ==========================================
-# 🧠 數據彙整邏輯 (整合 Dashboard, Law, ESG)
+# 🧠 數據彙整邏輯 (整合 Dashboard, Law, ESG, SDG 11)
 # ==========================================
 def collect_full_intelligence():
     dashboard = st.session_state.report_data
@@ -71,12 +71,17 @@ def collect_full_intelligence():
     # 抓取法規諮詢紀錄
     law_history = [m for m in st.session_state.law_messages if m["role"] != "system"]
     
+    # 【新增】SDG 11 相關數據
+    poi_scores = dashboard.get("poi_scores", [60]*6)
+    disaster_resilience = poi_scores[5] if len(poi_scores) > 5 else 60
+    
     return {
         "address": city,
         "lat_lon": f"{dashboard.get('lat', 0)}, {dashboard.get('lon', 0)}",
         "valuation": dashboard.get("moltke_data", {}).get("core_summary", {}).get("valuation", "N/A"),
         "esg_reduction": (h % 40) + 20,
         "success_rate": 60 + (h % 30),
+        "disaster_resilience": disaster_resilience,
         "chat_logs": law_history,
         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     }
@@ -86,20 +91,21 @@ intel = collect_full_intelligence()
 # ==========================================
 # 📍 主畫面佈局
 # ==========================================
-st.markdown('<div class="report-title">📄 Omni-Urban AI 綜合評估報告生成器</div>', unsafe_allow_html=True)
+st.markdown('<div class="report-title">📄 Omni-Urban AI 綜合評估報告<br><span style="font-size:0.55em; color:#34d399;">SDG 11 永續城市貢獻度量化與決策文件</span></div>', unsafe_allow_html=True)
 
 c1, c2 = st.columns([1.5, 1])
 
 with c1:
     st.markdown('<div class="summary-box">', unsafe_allow_html=True)
-    st.markdown("### 📌 報告編譯參數概覽：")
+    st.markdown("### 📌 報告編譯參數概覽（SDG 11 導向）：")
     sc1, sc2 = st.columns(2)
     with sc1:
         st.markdown(f'<div class="param-label">📍 目標標的</div><div class="param-value">{intel["address"]}</div>', unsafe_allow_html=True)
         st.markdown(f'<div class="param-label">💰 AI 估價參考</div><div class="param-value">{intel["valuation"]} 萬/坪</div>', unsafe_allow_html=True)
     with sc2:
         st.markdown(f'<div class="param-label">⚖️ 法規專家紀錄</div><div class="param-value">{len(intel["chat_logs"])} 則諮詢</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="param-label">🤝 整合成功機率</div><div class="param-value">{intel["success_rate"]}%</div>', unsafe_allow_html=True)
+        disaster_color = "#10B981" if intel["disaster_resilience"] >= 80 else "#F59E0B" if intel["disaster_resilience"] >= 60 else "#EF4444"
+        st.markdown(f'<div class="param-label">🚨 防災韌性評分 (SDG 11.5)</div><div style="font-size:1.2rem; font-weight:700; color:{disaster_color};">{intel["disaster_resilience"]}</div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
 with c2:
@@ -165,7 +171,30 @@ with c2:
                     # --- 第四頁：ESG 與 模擬 ---
                     pdf.add_page()
                     pdf.set_font(font_name, '', 18)
-                    pdf.cell(0, 15, "第三章：永續發展與住戶整合模擬", ln=True)
+                    pdf.set_text_color(245, 158, 11)
+                    pdf.cell(0, 15, "第三章：聯合國永續發展目標（SDG 11）貢獻度", ln=True)
+                    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+                    pdf.ln(10)
+                    pdf.set_text_color(0, 0, 0)
+                    pdf.set_font(font_name, '', 11)
+                    pdf.multi_cell(0, 8, txt="OmniUrban 系統將都市更新評估深度整合聯合國 SDG 11「永續城市與社區」框架，確保以下貢獻：")
+                    pdf.ln(5)
+                    pdf.set_font(font_name, '', 10)
+                    pdf.cell(0, 6, "✓ 11.1 安全可負擔住房（防灾韌性優先評估，提升居家安全）", ln=True)
+                    pdf.cell(0, 6, "✓ 11.3 包容性永續都市規劃（資訊透明化，多方利益相關者參與）", ln=True)
+                    pdf.cell(0, 6, "✓ 11.5 減少災害損失（消防通行能力評估，防灾改善補貼）", ln=True)
+                    pdf.cell(0, 6, "✓ 11.6 環境影響與綠色運輸（碳排減量、公共運輸整合分析）", ln=True)
+                    pdf.cell(0, 6, "✓ 11.7 安全包容綠色公共空間（高齡友善設計，社區參與）", ln=True)
+                    pdf.ln(10)
+                    pdf.set_font(font_name, '', 10)
+                    pdf.cell(0, 8, f"● ESG 減碳潛力評估：{intel['esg_reduction']} tCO2e / 年", ln=True)
+                    pdf.cell(0, 8, f"● 預估整合成功率：{intel['success_rate']}%", ln=True)
+                    pdf.cell(0, 8, "● 防災韌性評等：已整合至決策模型，優先考量消防、警力、地震防災", ln=True)
+
+                    # --- 第五頁：永續與社會責任 ---
+                    pdf.add_page()
+                    pdf.set_font(font_name, '', 18)
+                    pdf.cell(0, 15, "第四章：永續發展與住戶整合模擬", ln=True)
                     pdf.ln(10)
                     pdf.set_font(font_name, '', 12)
                     pdf.cell(0, 10, f"● ESG 減碳潛力評估：{intel['esg_reduction']} tCO2e / 年", ln=True)

@@ -111,7 +111,12 @@ st.sidebar.markdown(f"""
 # 📜 指令系統 (Prompts)
 # ==========================================
 EXPERT_PROMPT = """你是一位經驗豐富的台灣地政士，專長於《土地法》與《都更條例》。
-請精確指出法條，並給予實務建議。若涉及比例，請嘗試以數據描述。"""
+請精確指出法條，並給予實務建議。若涉及比例，請嘗試以數據描述。
+
+【重點指引】本系統遵循聯合國 SDG 11.3（包容性與可持續都市規劃），強調：
+- 資訊完全透明化：所有法規解釋需附加條文編號
+- 利益相關者包容：重視弱勢住戶、租戶、及周邊社區之聲音
+- 防災優先：都市更新應首先考慮建物安全與災害韌性"""
 
 SYNTHESIZER_PROMPT = """你現在是 OmniUrban 首席總編輯。
 我會提供數位專家的法律分析，請你：
@@ -123,9 +128,9 @@ SYNTHESIZER_PROMPT = """你現在是 OmniUrban 首席總編輯。
 # 💬 對話與邏輯
 # ==========================================
 if "law_messages" not in st.session_state:
-    st.session_state.law_messages = [{"role": "assistant", "content": "你好，奕陽！我已經召集了全球各大 AI 專家。現在你可以問我任何關於土地法規、永和都更或是產權糾紛的問題了！"}]
+    st.session_state.law_messages = [{"role": "assistant", "content": "你好！我是 OmniUrban 專家合議地政士，由全球 AI 顧問團隊支持。\n\n本系統遵循「資訊透明化與包容性都市規劃」原則（聯合國 SDG 11.3），確保：\n✅ 所有法規解釋都 100% 透明（附條文編號）\n✅ 充分考慮所有利益相關者（住戶、租戶、社區）\n✅ 防災與安全優先（SDG 11.5）\n\n現在，你可以詢問任何關於土地法規、都市更新、產權糾紛的問題！"}]
 
-st.markdown('<div class="hero-title">⚖️ 專家合議地政士 (2026)</div>', unsafe_allow_html=True)
+st.markdown('<div class="hero-title">⚖️ 專家合議地政士 2026<br><span style="font-size:0.6em; color:#34d399;">資訊透明化 × 包容性都市規劃 (SDG 11.3)</span></div>', unsafe_allow_html=True)
 
 for msg in st.session_state.law_messages:
     avatar = "⚖️" if msg["role"] == "assistant" else "👤"

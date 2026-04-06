@@ -42,10 +42,16 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🧠 意願模擬核心演算法
+# 🧠 意願模擬核心演算法（整合防災韌性評分）
 # ==========================================
 def calculate_success_prob(support, neutral, oppose, mode):
-    base_prob = support * 0.85 + (neutral * 0.35)
+    # 🚀 【新增】防災韌性加權因子
+    # 假設此地址的防災評分已從 session_state 取得
+    poi_scores = st.session_state.report_data.get("poi_scores", [60]*6)
+    disaster_resilience = poi_scores[5] if len(poi_scores) > 5 else 60  # poi_scores[5] = 防災治安
+    disaster_boost = (disaster_resilience - 60) * 0.005  # 防災分數越高，成功率越高（+0.5%/分）
+    
+    base_prob = support * 0.85 + (neutral * 0.35) + disaster_boost * 10
     if "危老" in mode:
         # 危老需要 100% 同意，所以門檻懲罰極重
         prob = base_prob * 0.3 if support < 90 else base_prob
@@ -63,6 +69,20 @@ with st.sidebar:
     total_units = st.number_input("🏠 總戶數設定", min_value=1, value=30)
     renewal_mode = st.radio("📜 政策路徑", ["一般都更 (門檻80%)", "危老重建 (門檻100%)"])
     
+    # 【新增】防災韌性顯示
+    poi_scores = st.session_state.report_data.get("poi_scores", [60]*6)
+    disaster_score = poi_scores[5] if len(poi_scores) > 5 else 60
+    resilience_color = "#10B981" if disaster_score >= 80 else "#F59E0B" if disaster_score >= 60 else "#EF4444"
+    st.markdown(f"""
+    <div style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; border-left: 4px solid {resilience_color};">
+        <div style="color:#94A3B8; font-size:0.75rem;">🚨 防災韌性評分</div>
+        <div style="color:{resilience_color}; font-size:1.8rem; font-weight:700;">{disaster_score}</div>
+        <div style="color:#94A3B8; font-size:0.75rem; margin-top:5px;">
+            {"⭐ 優秀 - 降低整合阻力" if disaster_score >= 80 else "⚠️ 普通 - 需強調安全改善" if disaster_score >= 60 else "🚫 不足 - 優先進行防灾改善"}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
     st.markdown("---")
     st.markdown("### 👥 住戶態度比例 (%)")
     support_rate = st.slider("支持 (已簽意向書)", 0, 100, 40)
@@ -74,11 +94,12 @@ with st.sidebar:
     st.markdown("### 🏬 結構與干預")
     shop_ratio = st.slider("店面戶佔比 (%)", 0, 50, 15)
     use_bonus = st.checkbox("啟動容積獎勵補貼 (刺激意願)")
+    use_safety_bonus = st.checkbox("⭐ 防災改善補貼 (提升韌性，鼓勵參與)")
 
 # ==========================================
 # 📍 主畫面標題
 # ==========================================
-st.markdown('<div class="sim-title">🎯 整合意願模擬與政策決策引擎</div>', unsafe_allow_html=True)
+st.markdown('<div class="sim-title">🎯 整合意願模擬與政策決策引擎<br><span style="font-size:0.55em; color:#34d399;">防災韌性優先 × 社區包容性評估</span></div>', unsafe_allow_html=True)
 
 # 安全地讀取資料，不再報錯
 curr_addr = st.session_state.report_data.get("city", "未設定")
@@ -88,15 +109,15 @@ st.markdown(f'<div style="color:#94A3B8; margin-bottom:25px;">{sync_icon} 當前
 # ==========================================
 # 📊 第一層：KPI 指標
 # ==========================================
-# 加入政策補貼影響
-effective_support = support_rate + (5 if use_bonus else 0)
+# 加入政策補貼影響（包括防災補貼）
+effective_support = support_rate + (5 if use_bonus else 0) + (3 if use_safety_bonus else 0)
 prob = calculate_success_prob(effective_support, neutral_rate, oppose_rate, renewal_mode)
 
 c1, c2, c3 = st.columns([1.5, 1, 1])
 
 with c1:
     st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-    st.markdown('<div class="label-tag">預估整合成功率 (Success %)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="label-tag">預估整合成功率 (防災韌性優先版本)</div>', unsafe_allow_html=True)
     fig = go.Figure(go.Indicator(
         mode = "gauge+number", value = prob,
         number = {'suffix': "%", 'font': {'color': '#60A5FA'}},
@@ -128,14 +149,30 @@ with c2:
     </div>""", unsafe_allow_html=True)
 
 with c3:
-    main_barrier = "店面補償協議" if shop_ratio > 20 else "反對戶法律訴訟" if oppose_rate > 30 else "觀望情緒過重"
+    # 🚀 【修改】主要阻力因子 - 融合防灾評估
+    poi_scores = st.session_state.report_data.get("poi_scores", [60]*6)
+    disaster_score = poi_scores[5] if len(poi_scores) > 5 else 60
+    
+    if disaster_score < 60:
+        main_barrier = "防災韌性不足 (優先)"
+        ai_advice = "建議先進行防灾改善評估與補貼宣導，提升居民安全信心與整合意願。（SDG 11.5）"
+    elif shop_ratio > 20:
+        main_barrier = "店面補償協議"
+        ai_advice = "1 樓店面收益是核心矛盾，建議先進行權利變換模擬。"
+    elif oppose_rate > 30:
+        main_barrier = "反對戶法律訴訟"
+        ai_advice = "反對比例過高，強行報核風險大，建議先進行非正式調解。"
+    else:
+        main_barrier = "觀望情緒過重"
+        ai_advice = "核心任務是將中立轉為支持，建議強調防灾與安全改善效益。"
+    
     st.markdown(f"""
     <div class="metric-card">
         <div class="label-tag">主要阻力因子</div>
         <div style="font-size:1.8rem; font-weight:700; color:#F59E0B; margin:10px 0;">{main_barrier}</div>
         <div class="advice-box" style="padding:10px; font-size:0.8rem; border-width:2px;">
             <b>AI 建議：</b><br>
-            { "1 樓店面收益是核心矛盾，建議先進行權利變換模擬。" if shop_ratio > 20 else "反對比例過高，強行報核風險大，建議先進行非正式調解。" }
+            {ai_advice}
         </div>
     </div>""", unsafe_allow_html=True)
 
@@ -168,11 +205,18 @@ st.markdown('</div>', unsafe_allow_html=True)
 # ==========================================
 st.write("")
 st.markdown('<div class="advice-box">', unsafe_allow_html=True)
-st.markdown("### 🤖 OmniUrban AI 策略診斷報告")
-if prob < 40:
+st.markdown("### 🤖 OmniUrban AI 策略診斷報告 (防災韌性優先)")
+
+# 【新增】融合防災評分的建議邏輯
+poi_scores = st.session_state.report_data.get("poi_scores", [60]*6)
+disaster_score = poi_scores[5] if len(poi_scores) > 5 else 60
+
+if disaster_score < 60:
+    st.error("🚨 **【防災韌性檢警】** 此地區消防/警力資源不足，居民安全是首要關切。建議先進行防灾改善方案，再推動都更吸引參與。")
+elif prob < 40:
     st.error("🚫 **【目前不建議報核】** 整合門檻差距過大，建議重新評估分配方案，或先轉向「整建維護」爭取初步共識。")
 elif prob < 75:
-    st.warning("⚠️ **【建議進入調解期】** 成功率具備潛力。重點應放在那比例最高的觀望群眾，建議舉辦「個別權利價值說明會」。")
+    st.warning("⚠️ **【建議進入調解期】** 成功率具備潛力。重點應放在那比例最高的觀望群眾，建議舉辦「防灾與權利價值說明會」，強調改善效益。")
 else:
-    st.success("🎉 **【建議立即啟動計畫】** 整合度已達標。建議儘速完成 100% 簽約並申請危老時程獎勵。")
+    st.success("🎉 **【建議立即啟動計畫】** 整合度已達標。防灾韌性優秀為加分項。建議儘速完成 100% 簽約並申請危老時程獎勵。")
 st.markdown('</div>', unsafe_allow_html=True)
