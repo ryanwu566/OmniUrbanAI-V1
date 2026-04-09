@@ -2,6 +2,7 @@
 import streamlit as st
 from openai import OpenAI
 import time
+from utils.engines import search_law_articles, fetch_moj_law_json, prepare_law_context, explain_law_with_ai
 
 st.set_page_config(layout="wide", page_title="法規虛擬地政士 | OmniUrban", initial_sidebar_state="expanded")
 
@@ -169,6 +170,58 @@ if "law_messages" not in st.session_state:
     st.session_state.law_messages = [{"role": "assistant", "content": "你好！我是 OmniUrban 專家合議地政士，由全球 AI 顧問團隊支持。\n\n本系統遵循「資訊透明化與包容性都市規劃」原則（聯合國 SDG 11.3），確保：\n✅ 所有法規解釋都 100% 透明（附條文編號）\n✅ 充分考慮所有利益相關者（住戶、租戶、社區）\n✅ 防災與安全優先（SDG 11.5）\n\n⚠️ **重要免責聲明**：本系統提供的資訊僅供參考，不構成正式法律意見。所有法規解釋均應以官方公布版本為準，建議諮詢專業地政士或律師取得最終確認。\n\n現在，你可以詢問任何關於土地法規、都市更新、產權糾紛的問題！"}]
 
 st.markdown('<div class="section-card"><div class="model-title">📌 使用說明</div><div style="color:#cbd5e1; font-size:0.93rem; line-height:1.8;">選擇可用模型後，請直接在下方輸入法規問題。系統將自動呼叫多模型合議，並以「法條編號+實務建議」方式回應。</div></div>', unsafe_allow_html=True)
+
+# ==========================================
+# 🔎 法規檢索與 AI 解析（RAG 架構）
+# ==========================================
+if "rag_query" not in st.session_state:
+    st.session_state.rag_query = ""
+if "rag_results" not in st.session_state:
+    st.session_state.rag_results = []
+if "rag_analysis" not in st.session_state:
+    st.session_state.rag_analysis = ""
+if "rag_selected_code" not in st.session_state:
+    st.session_state.rag_selected_code = ""
+
+with st.expander("🔎 法規檢索與 AI 解析（RAG 架構）", expanded=True):
+    st.markdown(
+        "本模組使用開源 MojLawSplit 法規 JSON 進行精確檢索，再由 LLM 解析結果。\n"
+        "- 先搜尋法規標題與條文內容，避免單純憑空產生。\n"
+        "- 若搜尋到法條，請點選「解析此法規」取得依據原文的解釋。\n"
+        "- 目前支援 `GEMINI_API_KEY`、`GROQ_API_KEY`。"
+    )
+    cols = st.columns([4, 1])
+    with cols[0]:
+        rag_query = st.text_input("法規檢索關鍵字或條號", value=st.session_state.rag_query,
+                                  placeholder="例如：土地法 第6條、不動產登記、A0060001")
+    with cols[1]:
+        rag_provider = st.selectbox("解析模型", ["Gemini", "Groq"], index=0)
+    if st.button("執行檢索", key="rag_search"):
+        st.session_state.rag_query = rag_query
+        st.session_state.rag_results = search_law_articles(rag_query, max_results=5)
+        st.session_state.rag_analysis = ""
+        st.session_state.rag_selected_code = ""
+
+    if st.session_state.rag_results:
+        st.markdown("### 檢索結果：")
+        for idx, item in enumerate(st.session_state.rag_results):
+            with st.expander(f"{item['code']} {item['law_name']}"):
+                st.markdown(item['match_excerpt'].replace("\n", "  \n"))
+                st.markdown(f"- GitHub JSON：[{item['code']}]({item['github_url']})")
+                if st.button(f"解析此法規 {item['code']}", key=f"rag_parse_{item['code']}"):
+                    law_json = fetch_moj_law_json(item['code'])
+                    if law_json:
+                        context = prepare_law_context(law_json, st.session_state.rag_query)
+                        st.session_state.rag_analysis = explain_law_with_ai(context, st.session_state.rag_query, provider=rag_provider)
+                        st.session_state.rag_selected_code = item['code']
+                    else:
+                        st.session_state.rag_analysis = "無法載入法規原文，請稍後再試。"
+    elif st.session_state.rag_query:
+        st.markdown("⚠️ 找不到符合的法規，請改用更具體的條號或關鍵字，例如：土地法 第6條、地政士法、A0060001。")
+
+    if st.session_state.rag_analysis:
+        st.markdown("### AI 解析結果（依據 MojLawSplit 原始法條）")
+        st.markdown(st.session_state.rag_analysis)
 
 for msg in st.session_state.law_messages:
     avatar = "⚖️" if msg["role"] == "assistant" else "👤"
