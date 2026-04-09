@@ -1127,13 +1127,22 @@ class OmniEngine:
         except: pass
         return {"status": "🔴", "station": "附近無站點", "dist": "--", "arrivals": [], "source": ""}
 
-    def _count_tdx_transit_points(self, lat, lon, radius=1000):
+    def _count_tdx_transit_points(self, lat, lon, addr="", radius=1000):
         token = self._get_tdx_token()
         if not token:
             return 0
+
+        county = None
+        if addr:
+            county = self._get_tdx_bike_county(addr)
+            if not county and isinstance(addr, str):
+                county = self._get_tdx_bike_county(addr.replace("台", "臺", 1))
+        if not county:
+            county = "Taipei"
+
         unique_names = set()
         try:
-            bus_stop_url = "https://tdx.transportdata.tw/api/basic/v2/Bus/Stop/City/Taipei"
+            bus_stop_url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/Stop/City/{urllib.parse.quote(county)}"
             stops = self._tdx_get(
                 bus_stop_url,
                 params={
@@ -1423,7 +1432,7 @@ class OmniEngine:
         theme_data = fetch_tgos_theme_data(lat, lon, radius=1000)
         if theme_data.get("ok") and theme_data.get("total", 0) > 0:
             counts = self._map_tgos_theme_to_poi_counts(theme_data["counts"])
-            tdx_transit_count = self._count_tdx_transit_points(lat, lon)
+            tdx_transit_count = self._count_tdx_transit_points(lat, lon, addr)
             if tdx_transit_count > counts[0]:
                 counts[0] = tdx_transit_count
             final_names = [[f"TGOS {categories[i]['name']} {j+1}" for j in range(min(3, counts[i]))] for i in range(6)]
