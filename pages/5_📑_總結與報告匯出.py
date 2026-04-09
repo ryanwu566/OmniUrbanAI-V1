@@ -4,6 +4,8 @@ from fpdf import FPDF
 import datetime
 import os
 import hashlib
+import plotly.graph_objects as go
+import tempfile
 
 # ==========================================
 # 🛡️ 頁面初始化：防止跨頁面數據丟失
@@ -86,6 +88,63 @@ def collect_full_intelligence():
         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     }
 
+# ==========================================
+# 📊 圖表生成函數 (用於PDF嵌入)
+# ==========================================
+def generate_esg_charts(intel):
+    # 模擬ESG數據
+    h = int(hashlib.md5(intel["address"].encode()).hexdigest(), 16)
+    area = 30 + (h % 60)
+    carbon_rebuild = area * 1.15
+    carbon_renovate = area * 0.28
+    
+    poi_scores = st.session_state.report_data.get("poi_scores", [50]*6)
+    social_score = (poi_scores[1] * 0.35 + poi_scores[2] * 0.25 + poi_scores[4] * 0.25 + poi_scores[5] * 0.30)
+    elderly_friendly = poi_scores[1] * 0.6 + poi_scores[4] * 0.4
+    
+    # 雷達圖數據
+    radar_dims = ["低碳節能", "高齡友善", "社會影響", "防災韌性", "生物多樣"]
+    radar_vals = [50 + (h % 45), int(elderly_friendly), int(social_score), poi_scores[5] if len(poi_scores) > 5 else 60, 30 + (len([]) * 12)]
+    
+    # 生成雷達圖
+    fig_radar = go.Figure()
+    fig_radar.add_trace(go.Scatterpolar(
+        r=radar_vals + [radar_vals[0]], theta=radar_dims + [radar_dims[0]],
+        fill='toself', fillcolor='rgba(16, 185, 129, 0.2)',
+        line=dict(color='#10B981', width=2.5)
+    ))
+    fig_radar.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+        showlegend=False, paper_bgcolor='white', plot_bgcolor='white',
+        width=400, height=300, margin=dict(l=20,r=20,t=20,b=20)
+    )
+    
+    # 碳中和圖
+    yrs = list(range(0, 21))
+    reb = [carbon_rebuild + (i * 0.4) for i in yrs]
+    ren = [carbon_renovate + (i * 1.8) for i in yrs]
+    
+    fig_carbon = go.Figure()
+    fig_carbon.add_trace(go.Scatter(x=yrs, y=reb, name="重建路徑", line=dict(color='#3B82F6', width=3)))
+    fig_carbon.add_trace(go.Scatter(x=yrs, y=ren, name="整建路徑", line=dict(color='#94A3B8', width=2, dash='dot')))
+    fig_carbon.update_layout(
+        paper_bgcolor='white', plot_bgcolor='white',
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+        width=400, height=250, margin=dict(l=20,r=20,t=20,b=20),
+        xaxis=dict(title="評估年份"),
+        yaxis=dict(title="累積碳排 (tCO2e)")
+    )
+    
+    # 保存圖表為臨時文件
+    with tempfile.TemporaryDirectory() as temp_dir:
+        radar_path = os.path.join(temp_dir, "radar_chart.png")
+        carbon_path = os.path.join(temp_dir, "carbon_chart.png")
+        
+        fig_radar.write_image(radar_path, format="png", scale=2)
+        fig_carbon.write_image(carbon_path, format="png", scale=2)
+        
+        return radar_path, carbon_path
+
 intel = collect_full_intelligence()
 
 # ==========================================
@@ -122,6 +181,9 @@ with c2:
         else:
             with st.spinner("正在編譯數據與生成專業排版..."):
                 try:
+                    # 生成圖表
+                    radar_chart_path, carbon_chart_path = generate_esg_charts(intel)
+                    
                     pdf = OmniReport()
                     # 💡 關鍵：強制載入 Unicode 字體並禁用斜體 (避免 msjhI 錯誤)
                     pdf.add_font('MSJH', '', font_path, uni=True)
@@ -151,12 +213,29 @@ with c2:
                     pdf.cell(0, 10, f"● 地理座標：{intel['lat_lon']}", ln=True)
                     pdf.cell(0, 10, f"● AI 預估行情：{intel['valuation']} 萬/坪", ln=True)
                     pdf.ln(5)
-                    pdf.multi_cell(0, 10, txt="本章節分析基於 Google Places API 之空間點位，針對醫療、教育、交通與商業密度進行權重換算。")
+                    pdf.multi_cell(0, 10, txt="本章節分析基於 TGOS 內政主題 API 之空間點位，針對醫療、教育、交通與商業密度進行權重換算。")
                     
-                    # --- 第三頁：法規對話紀錄 ---
+                    # --- 第三頁：ESG 圖表 ---
                     pdf.add_page()
                     pdf.set_font(font_name, '', 18)
-                    pdf.cell(0, 15, "第二章：地政法規專家意見紀錄", ln=True)
+                    pdf.set_text_color(16, 185, 129)
+                    pdf.cell(0, 15, "第二章：ESG 永續評估視覺化", ln=True)
+                    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+                    pdf.ln(10)
+                    pdf.set_text_color(0, 0, 0)
+                    pdf.set_font(font_name, '', 12)
+                    pdf.cell(0, 10, "SDG 11 五維度永續評估雷達圖：", ln=True)
+                    pdf.ln(5)
+                    pdf.image(radar_chart_path, x=10, y=pdf.get_y(), w=90)
+                    pdf.ln(80)
+                    pdf.cell(0, 10, "碳中和路徑比較圖：", ln=True)
+                    pdf.ln(5)
+                    pdf.image(carbon_chart_path, x=10, y=pdf.get_y(), w=90)
+                    
+                    # --- 第四頁：法規對話紀錄 ---
+                    pdf.add_page()
+                    pdf.set_font(font_name, '', 18)
+                    pdf.cell(0, 15, "第三章：地政法規專家意見紀錄", ln=True)
                     pdf.ln(10)
                     pdf.set_font(font_name, '', 10)
                     if intel['chat_logs']:
@@ -168,11 +247,11 @@ with c2:
                     else:
                         pdf.cell(0, 10, "尚無法規諮詢紀錄。", ln=True)
 
-                    # --- 第四頁：ESG 與 模擬 ---
+                    # --- 第五頁：ESG 與 模擬 ---
                     pdf.add_page()
                     pdf.set_font(font_name, '', 18)
                     pdf.set_text_color(245, 158, 11)
-                    pdf.cell(0, 15, "第三章：聯合國永續發展目標（SDG 11）貢獻度", ln=True)
+                    pdf.cell(0, 15, "第四章：聯合國永續發展目標（SDG 11）貢獻度", ln=True)
                     pdf.line(10, pdf.get_y(), 200, pdf.get_y())
                     pdf.ln(10)
                     pdf.set_text_color(0, 0, 0)
@@ -191,10 +270,10 @@ with c2:
                     pdf.cell(0, 8, f"● 預估整合成功率：{intel['success_rate']}%", ln=True)
                     pdf.cell(0, 8, "● 防災韌性評等：已整合至決策模型，優先考量消防、警力、地震防災", ln=True)
 
-                    # --- 第五頁：永續與社會責任 ---
+                    # --- 第六頁：永續與社會責任 ---
                     pdf.add_page()
                     pdf.set_font(font_name, '', 18)
-                    pdf.cell(0, 15, "第四章：永續發展與住戶整合模擬", ln=True)
+                    pdf.cell(0, 15, "第五章：永續發展與住戶整合模擬", ln=True)
                     pdf.ln(10)
                     pdf.set_font(font_name, '', 12)
                     pdf.cell(0, 10, f"● ESG 減碳潛力評估：{intel['esg_reduction']} tCO2e / 年", ln=True)

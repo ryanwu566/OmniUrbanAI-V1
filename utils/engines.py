@@ -76,6 +76,112 @@ def fetch_city_data(city_name: str, trade_type: str = "A") -> list[dict]:
     except Exception as e:
         return []
 
+
+def get_tgos_coordinates(address):
+    """
+    使用 TGOS 地址比對 API 將模糊地址轉為精準座標。
+    若發生錯誤或金鑰未設定，回傳預設坐標 (25.033964, 121.564468)。
+    """
+    default_coord = (25.033964, 121.564468)
+    try:
+        app_id = st.secrets.get("TGOS_APPID", "")
+        api_key = st.secrets.get("TGOS_APIKEY", "")
+        if not app_id or not api_key:
+            return default_coord
+
+        url = "https://addr.tgos.tw/addrws/v30/QueryAddr.asmx/QueryAddr"
+        params = {
+            "oAPPId": app_id,
+            "oAPIKey": api_key,
+            "oAddress": address,
+            "oMatch": "exact",
+            "oFormat": "json",
+        }
+        resp = requests.get(url, params=params, timeout=12)
+        resp.raise_for_status()
+        data = resp.json()
+        address_list = data.get("AddressList") or data.get("QueryAddrResult", {}).get("AddressList") or []
+        if not address_list:
+            return default_coord
+
+        item = address_list[0]
+        x = item.get("X") or item.get("x")
+        y = item.get("Y") or item.get("y")
+        if x is None or y is None:
+            return default_coord
+
+        return float(y), float(x)
+    except Exception as e:
+        print(f"[TGOS] get_tgos_coordinates error: {e}")
+        return default_coord
+
+
+def fetch_tgos_theme_data(lat, lon, radius=500):
+    """
+    使用 TGOS 內政主題 API 查詢特定座標半徑內的主題圖資。
+    回傳的字典包含各類設施數量與原始資料，方便後續轉換為六大機能評分依據。
+    """
+    result = {"ok": False, "total": 0, "counts": {}, "raw_features": [], "source": "TGOS_THEME"}
+    try:
+        api_key = st.secrets.get("TGOS_THEME_KEY", "")
+        if not api_key:
+            result["error"] = "TGOS_THEME_KEY 尚未設定"
+            return result
+
+        url = "https://data.tgos.tw/MOIDataThemeMgr"
+        params = {
+            "oAPIKey": api_key,
+            "oFormat": "json",
+            "oLat": lat,
+            "oLon": lon,
+            "oRadius": radius,
+        }
+        resp = requests.get(url, params=params, timeout=12)
+        resp.raise_for_status()
+        data = resp.json()
+
+        features = []
+        if isinstance(data, dict):
+            if "FeatureCollection" in data:
+                features = data.get("FeatureCollection", {}).get("features", [])
+            elif "featureMember" in data:
+                features = data.get("featureMember", [])
+            elif "d" in data and isinstance(data["d"], dict):
+                features = data["d"].get("results", []) or data["d"].get("FeatureCollection", {}).get("features", [])
+            elif "results" in data:
+                features = data.get("results", [])
+            else:
+                features = data.get("AddressList") or []
+
+        counts = {}
+        for item in features:
+            if not isinstance(item, dict):
+                continue
+            props = item.get("properties") or item.get("Attributes") or item
+            theme_name = str(
+                props.get("ThemeName")
+                or props.get("name")
+                or props.get("theme")
+                or props.get("Class")
+                or props.get("CLASS")
+                or props.get("TYPE")
+                or item.get("Name", "")
+            ).strip()
+            if not theme_name:
+                theme_name = "unknown"
+            counts[theme_name] = counts.get(theme_name, 0) + 1
+
+        result["ok"] = True
+        result["total"] = sum(counts.values())
+        result["counts"] = counts
+        result["raw_features"] = features
+        return result
+    except Exception as e:
+        print(f"[TGOS] fetch_tgos_theme_data error: {e}")
+        result["error"] = str(e)
+        return result
+
+
 class OmniEngine:
     def __init__(self):
         self.taiwan_data = TAIWAN_DATA
@@ -751,6 +857,26 @@ class OmniEngine:
                 "source": "API 異常"
             }
 
+    def _map_tgos_theme_to_poi_counts(self, theme_counts):
+        counts = [0] * 6
+        for name, value in theme_counts.items():
+            label = str(name).lower()
+            if any(w in label for w in ["捷運", "轉運", "公車", "station", "transit", "交通"]):
+                counts[0] += value
+            elif any(w in label for w in ["醫院", "診所", "hospital", "clinic", "health", "medical"]):
+                counts[1] += value
+            elif any(w in label for w in ["學校", "國小", "國中", "高中", "大學", "school", "education"]):
+                counts[2] += value
+            elif any(w in label for w in ["商業", "商場", "market", "mall", "shopping", "retail", "business"]):
+                counts[3] += value
+            elif any(w in label for w in ["公園", "綠地", "park", "garden", "recreation"]):
+                counts[4] += value
+            elif any(w in label for w in ["消防", "警察", "派出所", "police", "fire", "security"]):
+                counts[5] += value
+            else:
+                counts[3] += value // 2
+        return counts
+
     def get_real_poi_scores(self, lat, lon, addr):
         google_key = st.secrets.get("GOOGLE_MAPS_API_KEY", "")
         counts = [0]*6; raw_names = [[] for _ in range(6)]; raw_pois = []
@@ -762,6 +888,14 @@ class OmniEngine:
             {"name": "休閒綠地", "color": "darkgreen", "icon": "tree", "prefix": "fa"},
             {"name": "消防治安", "color": "red", "icon": "shield", "prefix": "fa"}
         ]
+
+        theme_data = fetch_tgos_theme_data(lat, lon, radius=1000)
+        if theme_data.get("ok") and theme_data.get("total", 0) > 0:
+            counts = self._map_tgos_theme_to_poi_counts(theme_data["counts"])
+            final_names = [[f"TGOS {categories[i]['name']} {j+1}" for j in range(min(3, counts[i]))] for i in range(6)]
+            poi_scores = [min(98, int((counts[i]/4)*100)+35) for i in range(6)]
+            return poi_scores, counts, final_names, raw_pois, theme_data.get("source", "TGOS_THEME")
+
         if google_key:
             queries = [
                 {"type": "transit_station", "radius": 800}, {"type": "hospital", "radius": 800},
@@ -871,6 +1005,12 @@ class OmniEngine:
     def get_dynamic_data(self, addr, floor):
         lat, lon = 25.0330, 121.5654
         google_key = st.secrets.get("GOOGLE_MAPS_API_KEY", "")
+        try:
+            tgos_lat, tgos_lon = get_tgos_coordinates(addr)
+            if (tgos_lat, tgos_lon) != (25.033964, 121.564468):
+                lat, lon = tgos_lat, tgos_lon
+        except: pass
+
         if google_key:
             try:
                 geo = self.http.get(
@@ -927,8 +1067,35 @@ class OmniEngine:
     def create_dual_map(self, lat, lon, raw_pois=[]):
         m = DualMap(location=[lat, lon], zoom_start=16)
 
-        folium.TileLayer('OpenStreetMap', name='標準街道圖 (OSM)', max_zoom=20, max_native_zoom=18).add_to(m.m1)
-        folium.TileLayer('CartoDB positron', name='淺色地圖 (Positron)', max_zoom=20, max_native_zoom=18).add_to(m.m1)
+        tgos_key = st.secrets.get("TGOS_MAP_KEY", "")
+        if tgos_key:
+            tgos_tile_url = (
+                "https://api.tgos.tw/TGOS_MAP_API_3/WMTS?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0"
+                "&LAYER=TGOS_BASEMAP&STYLE=default&TILEMATRIXSET=GoogleMapsCompatible"
+                "&FORMAT=image/png&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}"
+                f"&apikey={urllib.parse.quote(tgos_key)}"
+            )
+            folium.TileLayer(
+                tiles=tgos_tile_url,
+                attr='TGOS 官方底圖',
+                name='TGOS 官方底圖 (WMTS)',
+                max_zoom=19,
+                max_native_zoom=19,
+                overlay=False,
+                control=True
+            ).add_to(m.m1)
+            folium.TileLayer(
+                tiles=tgos_tile_url,
+                attr='TGOS 官方底圖',
+                name='TGOS 官方底圖 (WMTS)',
+                max_zoom=19,
+                max_native_zoom=19,
+                overlay=False,
+                control=True
+            ).add_to(m.m2)
+        else:
+            folium.TileLayer('OpenStreetMap', name='標準街道圖 (OSM)', max_zoom=20, max_native_zoom=18).add_to(m.m1)
+            folium.TileLayer('CartoDB positron', name='淺色地圖 (Positron)', max_zoom=20, max_native_zoom=18).add_to(m.m1)
 
         folium.TileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attr='Esri', name='衛星空照圖 (Satellite)', max_zoom=20, max_native_zoom=17).add_to(m.m2)
         folium.TileLayer('OpenStreetMap', name='標準街道圖 (OSM)', max_zoom=20, max_native_zoom=18).add_to(m.m2)
