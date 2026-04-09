@@ -1506,30 +1506,103 @@ class OmniEngine:
                 "鼓山區": 48, "左營區": 45
             }
             base_price, source_tag = fallback.get(dist, 40), "系統備援庫 + 特徵估價"
-        age_dep = (age * 0.8 if age <= 10 else (8 + (age - 10) * 0.5 if age <= 30 else 18 + (age - 30) * 0.2))
+        
+        # ═════════════════════════════════════════════════════════════
+        # 【改進】精確屋齡貶值曲線（考慮維修週期與建築安全考量）
+        # ═════════════════════════════════════════════════════════════
+        # 0-5年：狀況最佳，微幅貶值 (-1%/年)
+        # 5-10年：一般狀況，逐年貶值 (-1.5%/年)
+        # 10-20年：需進行中修或外牆更新，加速貶值 (-2.5%/年)
+        # 20-30年：面臨大修，貶值明顯 (-3.5%/年)
+        # 30+年：危老條件固定上限 (-65%)，防止過度貶值
+        if age <= 5:
+            age_dep = age * 1.0  # 1% per year
+        elif age <= 10:
+            age_dep = 5 * 1.0 + (age - 5) * 1.5  # 前5年1%/yr + 後面1.5%/yr
+        elif age <= 20:
+            age_dep = 5 * 1.0 + 5 * 1.5 + (age - 10) * 2.5  # 累進
+        elif age <= 30:
+            age_dep = 5 * 1.0 + 5 * 1.5 + 10 * 2.5 + (age - 20) * 3.5
+        else:
+            # 30年以上：固定上限地貶值，防止過度折扣（危老建物仍有價值）
+            age_dep = 65  # 最多貶值 65%，保留 35% 的基礎價值
+        
         price = base_price - age_dep
-        if "店面" in floor: price *= 1.6
-        elif "公寓" in floor: price -= 10
-        elif "電梯大樓" in floor: price += 6
-        elif "全棟評估" in floor: price *= 1.25
-        # 【關鍵修改】強化防災權重（SDG 11 永續城市對齊）
-        # 權重順序：防災(25%) > 交通(20%) > 醫療(15%) > 教育(15%) > 商業(15%) > 綠地(10%)
-        # 防災 poi_scores[5] 現在被賦予最高的估價影響係數
+        
+        # ═════════════════════════════════════════════════════════════
+        # 【改進】建築類型調整（更詳細的分類）
+        # ═════════════════════════════════════════════════════════════
+        if "店面" in floor: 
+            price *= 1.6  # 商業用途溢價
+        elif "全棟評估" in floor: 
+            price *= 1.25  # 整棟不動產溢價
+        elif "電梯大樓" in floor: 
+            price += 6  # 電梯大樓定額加成
+        elif "華廈" in floor:
+            price += 3  # 公寓華廈中間值
+        elif "公寓" in floor: 
+            price -= 10  # 公寓折價
+        elif "透天厝" in floor:
+            price += 8  # 透天加成
+        
+        # ═════════════════════════════════════════════════════════════
+        # 【改進】POI 影響因子非線性計算（S曲線加權）
+        # ═════════════════════════════════════════════════════════════
+        # 原理：POI 分數在 60-80 區間內影響最敏感，<50 和 >90 時邊際效果遞減
+        def poi_sigmoid(score, midpoint=70, scale=0.015):
+            """S 曲線轉換，使 POI 分數影響更符合現實"""
+            import math
+            return 1 / (1 + math.exp(-scale * (score - midpoint)))
+        
+        # 權重重新調整（SDG 11 對齊 + 現實市場）：
+        # 防災(30%) > 交通(25%) > 醫療(15%) > 教育(15%) > 商業(10%) > 綠地(5%)
         ext_mult = (1.0 
-                    + (poi_scores[5]-60)*0.0025      # 【NEW】防災治安：最高權重(25%)，係數加倍
-                    + (poi_scores[0]-60)*0.0020      # 【UPDATE】交通樞紐：20% (從15%上升)
-                    + (poi_scores[1]-60)*0.0015      # 醫療網絡：15%
-                    + (poi_scores[2]-60)*0.0015      # 學區教育：15%
-                    + (poi_scores[3]-60)*0.0015      # 商業聚落：15% (從20%下調)
-                    + (poi_scores[4]-60)*0.0010)     # 休閒綠地：10% (從15%下調)
+                    + (poi_sigmoid(poi_scores[5]) - 0.5) * 0.30      # 防災治安：30% (S曲線)
+                    + (poi_sigmoid(poi_scores[0]) - 0.5) * 0.25      # 交通樞紐：25% (S曲線)
+                    + (poi_sigmoid(poi_scores[1]) - 0.5) * 0.15      # 醫療網絡：15%
+                    + (poi_sigmoid(poi_scores[2]) - 0.5) * 0.15      # 學區教育：15%
+                    + (poi_sigmoid(poi_scores[3]) - 0.5) * 0.10      # 商業聚落：10%
+                    + (poi_sigmoid(poi_scores[4]) - 0.5) * 0.05)     # 休閒綠地：5%
         
-        # YouBike 微型運輸 —— 支援 SDG 11.6 減少環境負面影響
+        # ═════════════════════════════════════════════════════════════
+        # 【改進】危老條件加成（SDG 11.5 防災重建催化）
+        # ═════════════════════════════════════════════════════════════
+        if age >= 30:
+            # 危老建物：基礎折價後，加上都更潛力加成 (+8-12%)
+            elderly_building_bonus = 0.08 + (age - 30) * 0.002  # 最多 +12%
+            ext_mult += elderly_building_bonus
+        
+        # ═════════════════════════════════════════════════════════════
+        # 【改進】YouBike/公共運輸距離的非線性加成
+        # ═════════════════════════════════════════════════════════════
         if isinstance(yb_dist, (int, float)):
-            ext_mult += 0.03 if yb_dist <= 300 else (0.01 if yb_dist <= 800 else -0.02)
+            if yb_dist <= 200:
+                ext_mult += 0.05  # ⭐ 極佳位置
+            elif yb_dist <= 400:
+                ext_mult += 0.03  # ⭐⭐ 優秀
+            elif yb_dist <= 700:
+                ext_mult += 0.01  # ⭐⭐⭐ 良好
+            elif yb_dist <= 1200:
+                ext_mult += -0.01  # ◆ 尚可
+            else:
+                ext_mult += -0.03  # ◆◆ 偏遠
         
+        # ═════════════════════════════════════════════════════════════
+        # 【改進】計算最終單價 + 精確化信心區間
+        # ═════════════════════════════════════════════════════════════
         final_price = max(15, int(price * ext_mult))
-        variance = 0.06 + (random.random() * 0.04)
-        return (f"{int(final_price*(1-variance))} ~ {int(final_price*(1+variance))}", source_tag, final_price)
+        
+        # 根據各因子的確定性動態調整信心區間
+        # 基礎 4-6% 變異，再加上年齡與POI波動性
+        age_uncertainty = (age / 50) * 0.02  # 年齡越老，越不確定
+        poi_uncertainty = (abs(sum(poi_scores) - 60*6) / (100*6)) * 0.03  # POI 越極端，越不確定
+        base_variance = 0.05 + age_uncertainty + poi_uncertainty
+        
+        variance = max(0.03, min(0.12, base_variance))  # 夾緊在 3-12%
+        low_val = int(final_price * (1 - variance))
+        high_val = int(final_price * (1 + variance))
+        
+        return (f"{low_val} ~ {high_val}", source_tag, final_price)
 
     def _get_street_heading(self, lat, lon, google_key):
         if not google_key: return 0
