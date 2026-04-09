@@ -228,10 +228,16 @@ with st.sidebar:
         
         import requests as _req
         _tok = engine._get_tdx_token()
+        test_county = engine._get_tdx_bike_county(_city)
+        if not test_county:
+            test_county = engine._get_tdx_bike_county(_city.replace("台", "臺", 1)) if isinstance(_city, str) else None
+        if not test_county:
+            test_county = "Taipei"
+
         if _tok:
             try:
                 _r = _req.get(
-                    "https://tdx.transportdata.tw/api/basic/v2/Bike/Station/NearBy",
+                    f"https://tdx.transportdata.tw/api/basic/v2/Bike/Station/City/{test_county}",
                     headers={"Authorization": f"Bearer {_tok}", "Accept": "application/json"},
                     params={"$spatialFilter": f"nearby({_test_lat},{_test_lon},1200)",
                             "$format": "JSON", "$top": 5,
@@ -267,10 +273,16 @@ with st.sidebar:
         
         import requests as _req
         _tok = engine._get_tdx_token()
+        test_county = engine._get_tdx_bike_county(_city)
+        if not test_county:
+            test_county = engine._get_tdx_bike_county(_city.replace("台", "臺", 1)) if isinstance(_city, str) else None
+        if not test_county:
+            test_county = "Taipei"
+
         if _tok:
             try:
                 _r = _req.get(
-                    "https://tdx.transportdata.tw/api/basic/v2/Bus/Stop/NearBy",
+                    f"https://tdx.transportdata.tw/api/basic/v2/Bus/Stop/City/{test_county}",
                     headers={"Authorization": f"Bearer {_tok}", "Accept": "application/json"},
                     params={"$spatialFilter": f"nearby({_test_lat},{_test_lon},800)",
                             "$format": "JSON", "$top": 5,

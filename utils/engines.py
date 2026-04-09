@@ -45,6 +45,38 @@ CITY_CODES = {
 NAME_TO_CODE = {v: k for k, v in CITY_CODES.items()}
 NAME_TO_CODE.update({"臺北市": "A", "臺中市": "B", "臺南市": "D", "臺東縣": "T"})
 
+TDX_BIKE_COUNTY_MAP = {
+    "台北市": "Taipei", "臺北市": "Taipei",
+    "新北市": "NewTaipei",
+    "基隆市": "Keelung",
+    "桃園市": "Taoyuan",
+    "新竹市": "Hsinchu",
+    "新竹縣": "HsinchuCounty",
+    "苗栗縣": "MiaoliCounty",
+    "台中市": "Taichung", "臺中市": "Taichung",
+    "彰化縣": "ChanghuaCounty",
+    "南投縣": "NantouCounty",
+    "雲林縣": "YunlinCounty",
+    "嘉義市": "Chiayi",
+    "嘉義縣": "ChiayiCounty",
+    "台南市": "Tainan", "臺南市": "Tainan",
+    "高雄市": "Kaohsiung",
+    "屏東縣": "PingtungCounty",
+    "宜蘭縣": "YilanCounty",
+    "花蓮縣": "HualienCounty",
+    "台東縣": "TaitungCounty", "臺東縣": "TaitungCounty",
+    "澎湖縣": "PenghuCounty",
+    "金門縣": "KinmenCounty",
+    "連江縣": "LienchiangCounty",
+    "Taipei": "Taipei", "NewTaipei": "NewTaipei", "Keelung": "Keelung", "Taoyuan": "Taoyuan",
+    "Hsinchu": "Hsinchu", "HsinchuCounty": "HsinchuCounty", "MiaoliCounty": "MiaoliCounty",
+    "Taichung": "Taichung", "ChanghuaCounty": "ChanghuaCounty", "NantouCounty": "NantouCounty",
+    "YunlinCounty": "YunlinCounty", "Chiayi": "Chiayi", "ChiayiCounty": "ChiayiCounty",
+    "Tainan": "Tainan", "Kaohsiung": "Kaohsiung", "PingtungCounty": "PingtungCounty",
+    "YilanCounty": "YilanCounty", "HualienCounty": "HualienCounty", "TaitungCounty": "TaitungCounty",
+    "PenghuCounty": "PenghuCounty", "KinmenCounty": "KinmenCounty", "LienchiangCounty": "LienchiangCounty",
+}
+
 # open-source MojLawSplit JSON law data for RAG retrieval
 MOJ_LAW_INDEX_URL = "https://raw.githubusercontent.com/kong0107/mojLawSplitJSON/arranged/ch/index.json"
 MOJ_LAW_BASE_URL = "https://raw.githubusercontent.com/kong0107/mojLawSplitJSON/arranged/ch"
@@ -666,6 +698,23 @@ class OmniEngine:
     # ──────────────────────────────────────────────────
     # ✅ TDX OAuth2（修復：改用獨立 requests，完整記錄錯誤）
     # ──────────────────────────────────────────────────
+    def _get_tdx_bike_county(self, addr):
+        if not addr:
+            return None
+        text = str(addr).strip()
+        if not text:
+            return None
+
+        for key in sorted(TDX_BIKE_COUNTY_MAP.keys(), key=len, reverse=True):
+            if text.startswith(key):
+                return TDX_BIKE_COUNTY_MAP[key]
+
+        lower = text.lower()
+        for key, value in TDX_BIKE_COUNTY_MAP.items():
+            if key.lower() in lower:
+                return value
+        return None
+
     def _get_tdx_token(self):
         now = time.time()
         if st.session_state.tdx_token and now < st.session_state.tdx_token_exp - 60:
@@ -787,13 +836,18 @@ class OmniEngine:
     def get_youbike_data(self, lat, lon, addr=""):
         token = self._get_tdx_token()
         if token:
+            county = self._get_tdx_bike_county(addr)
+            if not county:
+                county = self._get_tdx_bike_county(addr.replace("台", "臺", 1)) if isinstance(addr, str) else None
+            if not county:
+                county = "Taipei"
+
             try:
                 stations = self._tdx_get(
-                    "https://tdx.transportdata.tw/api/basic/v2/Bike/Station/NearBy",
+                    f"https://tdx.transportdata.tw/api/basic/v2/Bike/Station/City/{urllib.parse.quote(county)}",
                     params={
-                        "$spatialFilter": f"nearby({lat},{lon},1200)",
                         "$format":        "JSON",
-                        "$top":           50,   # ✅ 修復：原版 20 在大台北常截斷
+                        "$top":           2000,
                         "$select":        "StationUID,StationName,StationPosition",
                     }
                 )
@@ -808,11 +862,10 @@ class OmniEngine:
                     stations.sort(key=_d)
 
                     avails = self._tdx_get(
-                        "https://tdx.transportdata.tw/api/basic/v2/Bike/Availability/NearBy",
+                        f"https://tdx.transportdata.tw/api/basic/v2/Bike/Availability/City/{urllib.parse.quote(county)}",
                         params={
-                            "$spatialFilter": f"nearby({lat},{lon},1200)",
                             "$format":        "JSON",
-                            "$top":           100,  # ✅ 修復：原版 50 可能不足
+                            "$top":           2000,
                             "$select":        "StationUID,AvailableRentBikes,AvailableReturnBikes",
                         }
                     ) or []
@@ -836,7 +889,7 @@ class OmniEngine:
                         return {
                             "status": "🟢", "station": c["name"], "dist": c["dist"],
                             "bikes": c["bikes"], "empty_slots": c["empty"],
-                            "source": "TDX 全台即時", "nearby_stations": nearby
+                            "source": f"TDX 全台即時 ({county})", "nearby_stations": nearby
                         }
             except Exception as e:
                 print(f"[TDX] YouBike Error: {e}")
@@ -856,13 +909,20 @@ class OmniEngine:
             return self._bus_google_fallback(lat, lon)
 
         try:
+            county = self._get_tdx_bike_county(addr)
+            if not county:
+                county = self._get_tdx_bike_county(addr.replace("台", "臺", 1)) if isinstance(addr, str) else None
+            if not county:
+                county = "Taipei"
+
+            bus_stop_url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/Stop/City/{urllib.parse.quote(county)}"
             stops = self._tdx_get(
-                "https://tdx.transportdata.tw/api/basic/v2/Bus/Stop/NearBy",
+                bus_stop_url,
                 params={
                     "$spatialFilter": f"nearby({lat},{lon},600)",
                     "$format":        "JSON",
                     "$top":           30,
-                    "$select":        "StopUID,StopName,StopPosition,RouteName",
+                    "$select":        "StopUID,StopName,StopPosition",
                 }
             )
 
@@ -871,12 +931,12 @@ class OmniEngine:
             if not stops:
                 search_radius = 1000
                 stops = self._tdx_get(
-                    "https://tdx.transportdata.tw/api/basic/v2/Bus/Stop/NearBy",
+                    bus_stop_url,
                     params={
                         "$spatialFilter": f"nearby({lat},{lon},1000)",
                         "$format":        "JSON",
                         "$top":           30,
-                        "$select":        "StopUID,StopName,StopPosition,RouteName",
+                        "$select":        "StopUID,StopName,StopPosition",
                     }
                 )
 
@@ -897,8 +957,9 @@ class OmniEngine:
             stop_uid_set = {s.get("StopUID") for s in stops if s.get("StopUID")}
 
             # ✅ 修復：ETA 半徑與 Stop 查詢半徑保持一致，防止找到的站牌抓不到 ETA
+            bus_eta_url = f"https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/City/{urllib.parse.quote(county)}"
             etas = self._tdx_get(
-                "https://tdx.transportdata.tw/api/basic/v2/Bus/EstimatedTimeOfArrival/NearBy",
+                bus_eta_url,
                 params={
                     "$spatialFilter": f"nearby({lat},{lon},{search_radius})",
                     "$format":        "JSON",
@@ -906,6 +967,20 @@ class OmniEngine:
                     "$select":        "StopUID,RouteName,EstimateTime,StopStatus,Direction,PlateNumb",
                 }
             ) or []
+
+            if not etas:
+                stop_uids = [s.get("StopUID") for s in stops[:6] if s.get("StopUID")]
+                if stop_uids:
+                    filter_expr = " or ".join([f"StopUID eq '{uid}'" for uid in stop_uids])
+                    etas = self._tdx_get(
+                        bus_eta_url,
+                        params={
+                            "$filter": filter_expr,
+                            "$format": "JSON",
+                            "$top": 200,
+                            "$select": "StopUID,RouteName,EstimateTime,StopStatus,Direction,PlateNumb",
+                        }
+                    ) or []
 
             matched = [e for e in etas if e.get("StopUID") in stop_uid_set]
             if not matched:
@@ -1058,8 +1133,9 @@ class OmniEngine:
             return 0
         unique_names = set()
         try:
+            bus_stop_url = "https://tdx.transportdata.tw/api/basic/v2/Bus/Stop/City/Taipei"
             stops = self._tdx_get(
-                "https://tdx.transportdata.tw/api/basic/v2/Bus/Stop/NearBy",
+                bus_stop_url,
                 params={
                     "$spatialFilter": f"nearby({lat},{lon},{radius})",
                     "$format": "JSON",
