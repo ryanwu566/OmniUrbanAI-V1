@@ -140,10 +140,13 @@ def generate_esg_charts(intel):
         radar_path = os.path.join(temp_dir, "radar_chart.png")
         carbon_path = os.path.join(temp_dir, "carbon_chart.png")
         
-        fig_radar.write_image(radar_path, format="png", scale=2)
-        fig_carbon.write_image(carbon_path, format="png", scale=2)
-        
-        return radar_path, carbon_path
+        try:
+            fig_radar.write_image(radar_path, format="png", scale=2)
+            fig_carbon.write_image(carbon_path, format="png", scale=2)
+            return radar_path, carbon_path
+        except Exception as e:
+            print(f"[PDF] Plotly image export failed: {e}")
+            return None, None
 
 intel = collect_full_intelligence()
 
@@ -226,11 +229,15 @@ with c2:
                     pdf.set_font(font_name, '', 12)
                     pdf.cell(0, 10, "SDG 11 五維度永續評估雷達圖：", ln=True)
                     pdf.ln(5)
-                    pdf.image(radar_chart_path, x=10, y=pdf.get_y(), w=90)
-                    pdf.ln(80)
-                    pdf.cell(0, 10, "碳中和路徑比較圖：", ln=True)
-                    pdf.ln(5)
-                    pdf.image(carbon_chart_path, x=10, y=pdf.get_y(), w=90)
+                    if radar_chart_path and carbon_chart_path:
+                        pdf.image(radar_chart_path, x=10, y=pdf.get_y(), w=90)
+                        pdf.ln(80)
+                        pdf.cell(0, 10, "碳中和路徑比較圖：", ln=True)
+                        pdf.ln(5)
+                        pdf.image(carbon_chart_path, x=10, y=pdf.get_y(), w=90)
+                    else:
+                        pdf.set_font(font_name, '', 11)
+                        pdf.multi_cell(0, 8, txt="⚠️ 目前無法生成圖表圖檔。請安裝 Kaleido 或更新環境後重新生成 PDF。")
                     
                     # --- 第四頁：法規對話紀錄 ---
                     pdf.add_page()

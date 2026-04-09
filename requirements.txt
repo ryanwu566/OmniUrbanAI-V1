@@ -2,6 +2,7 @@ streamlit
 fpdf2
 openai
 plotly
+kaleido
 pandas
 numpy
 requests
